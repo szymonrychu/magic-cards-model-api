@@ -22,6 +22,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from magic_cards_model_api.agent_settings import Effort
 from magic_cards_model_api.sim.claude import ClaudeMatchManager
 from magic_cards_model_api.sim.config import SimLimits
+from magic_cards_model_api.sim.lookup import MAX_LOOKUP_NAMES, card_lookup
 from magic_cards_model_api.sim.manager import (
     BatchManager,
     Reaper,
@@ -59,6 +60,28 @@ Always relay support_warnings (cards the engine does not fully support) to the u
 any result that depends on them as unreliable.
 A refused call returns {"error": ...} or {"allowed": false, "reason": ...}: read it, never retry
 it blindly, and never loop on a refusal.
+
+Board photo, "what should I play now?":
+1. Read the photo (crop per zone when small): both battlefields (tapped, counters, tokens),
+   graveyards, exile, your hand, life totals, the phase if told.
+2. Verify every name with sim_card_lookup. Ask the user to confirm the recognised cards only
+   when a card is uncertain (not_found, status fuzzy = Scryfall guessed a different spelling,
+   doubtful read); otherwise proceed without asking.
+3. Build only what the player can see with sim_new (tapped, counters, face_up; library_filler so
+   draws do not lose); never invent cards for the opponent's hidden hand. Then sim_snapshot the
+   root.
+4. Compare the candidate plays inside this one sandbox: per line sim_act the steps of the
+   CURRENT turn only, read the end state (life, board, cards, mana left), then sim_restore the
+   root and try the next. Do not simulate the opponent's next turn: reason about it in text
+   (their open mana, colours, likely plays).
+5. If the user names the opponent's deck or archetype, test each candidate line against a few
+   likely answers from that deck: after your line, pass priority so the opponent holds it,
+   sim_snapshot, then sim_act add_card (card, player = the opponent, zone hand, plus a land or
+   two on the battlefield for mana; the answer gives the new card_id) and let the opponent cast
+   it with sim_act cast; read the outcome and sim_restore for the next answer or line.
+6. Reply: the recognised board with doubts, the best play as ordered steps, a short why, the
+   alternatives and answers tried, the expected opponent turn (reasoned, not simulated), caveats
+   (support_warnings, guesses). sim_end when done.
 """
 
 BASELINE_INSTRUCTIONS = """\
@@ -67,10 +90,14 @@ Or run engine-only baseline batches with sim_match (poll sim_match_status).
 """
 
 _SPEC_DOC = (
-    'spec shape: {"players": [{"name": "alice", "life": 20}, ...], "active_player": "alice",'
-    ' "step": "precombat_main", "cards": [{"card": "Lightning Bolt", "player": "alice",'
-    ' "zone": "hand", "label": "bolt", "counters": {}, "damage": 0, "summoning_sick": false}],'
-    ' "mana_pool": {"alice": "R"}}. Unknown fields are refused.'
+    'spec shape: {"players": [{"name": "alice", "life": 20, "library_filler": {"name": "Island",'
+    ' "count": 20}}, ...], "active_player": "alice", "step": "precombat_main", "cards": [{"card":'
+    ' "Lightning Bolt", "player": "alice", "zone": "hand", "label": "bolt", "tapped": false,'
+    ' "face_up": true, "counters": {}, "damage": 0, "summoning_sick": false}],'
+    ' "mana_pool": {"alice": "R"}}. Unknown fields are refused. Libraries start empty and a'
+    " player who draws from an empty library loses: give library_filler (1-60 copies under the"
+    " library, below any library cards of the spec) when a line crosses a draw step."
+    " face_up=false puts a card face down (answers mark it face_down)."
 )
 _LABELS_DOC = (
     'Labels: a card with "label": "x" is addressed as "@x" anywhere a card id is expected,'
@@ -143,6 +170,25 @@ def build_sim_server(
                 {"action": action, "player": player, "body": body or {}, "dry_run": dry_run},
             )
         )
+
+    @server.tool(
+        description=(
+            "Save the sandbox board (with any pending decision) as a snapshot and return its id."
+            " Try a candidate line with sim_act, then sim_restore the snapshot and try the next."
+            " Board mode only (sim_new, sim_run_script keep=True). label names it; a label used"
+            " again replaces that snapshot. At most"
+            f" {limits.max_snapshots} per sandbox (MTG_SIM_MAX_SNAPSHOTS); they end with the"
+            " sandbox. Answers list the snapshots under `snapshots`."
+        )
+    )
+    async def sim_snapshot(sandbox_id: str, label: str | None = None) -> dict[str, Any]:
+        return await _tool(lambda: manager.call(sandbox_id, "snapshot", {"label": label}))
+
+    @server.tool()
+    async def sim_restore(sandbox_id: str, snapshot: str) -> dict[str, Any]:
+        """Put a snapshot (its id or label) back as the sandbox board. The snapshot stays: acting
+        afterwards does not change it, so it can be restored again for the next line."""
+        return await _tool(lambda: manager.call(sandbox_id, "restore", {"snapshot": snapshot}))
 
     @server.tool(
         description=(
@@ -353,6 +399,22 @@ def build_sim_server(
     )
     async def sim_match_claude_status(match_id: str) -> dict[str, Any]:
         return await _tool(lambda: claude.status(match_id))
+
+    @server.tool(
+        description=(
+            f"Check up to {MAX_LOOKUP_NAMES} card names (read from a photo or a chat) before"
+            " building a board. Each resolves through Scryfall (exact, then fuzzy, so loose"
+            " spellings work) and comes back as {query, status: found | fuzzy, exact, name,"
+            " mana_cost, type_line, oracle_text (short), power_toughness or loyalty,"
+            " engine_support: handled | notice | unaudited | silent | unloadable,"
+            " unsupported_clauses} or {query, status: not_found} (unknown or ambiguous: give more"
+            " of the name), error or not_checked (time ran out: ask again for those). fuzzy"
+            " (exact false) means the name differs from the query and the card may be another"
+            " one: treat it as uncertain. Uses no sandbox slot."
+        )
+    )
+    async def sim_card_lookup(names: list[str]) -> dict[str, Any]:
+        return await _tool(lambda: card_lookup(names, wait_s))
 
     @server.tool()
     async def sim_end(sandbox_id: str) -> dict[str, Any]:

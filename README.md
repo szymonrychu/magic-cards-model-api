@@ -676,14 +676,26 @@ environment, no database and a memory cap.
 - Auth: `Authorization: Bearer <MTG_SIM_TOKEN>`. Unset token answers 503 (disabled), a wrong or
   missing one 401. The token comes from the `mtg-sim` Secret; it is not `OPS_TOKEN`.
 - Reach: in-cluster only. `/sim` is denied at the public ingresses like `/metrics`.
-- Tools: `sim_new`, `sim_state`, `sim_legal_actions`, `sim_act`, `sim_run_script`,
-  `sim_import_mtgo_log`, `sim_review_mtgo_log`, `sim_end`, `sim_match_claude_start`, `sim_match_claude_status`; and,
+- Tools: `sim_card_lookup`, `sim_new`, `sim_state`, `sim_legal_actions`, `sim_act`, `sim_snapshot`, `sim_restore`,
+  `sim_run_script`, `sim_import_mtgo_log`, `sim_review_mtgo_log`, `sim_end`, `sim_match_claude_start`, `sim_match_claude_status`; and,
   only when `MTG_SIM_BASELINE_ENABLED` is set, `sim_play_new`, `sim_match`, `sim_match_status`.
   The engine baseline AI is off as an opponent by default: with the flag unset those three tools
   are not registered and `BatchManager.start` / `SandboxManager.new(mode="play")` refuse with a
   message naming the flag. `answers: "baseline"` of `sim_run_script` (the engine's default
   decision answer) and the MTGO import are not affected.
   Cards carry labels (`"label": "bolt"` in the spec, `"@bolt"` in action bodies).
+- Card names: `sim_card_lookup(names)` checks up to 40 names through the Scryfall lookup the
+  sandboxes use (cache first; exact, then fuzzy) and answers per name the canonical name, mana
+  cost, type line, `exact` (false and status `fuzzy` when the canonical name differs from the query),
+  a short oracle text, power/toughness or loyalty and `engine_support`
+  (`handled`, or the `support_warnings` status with the unsupported clauses), or `not_found`
+  (unknown or ambiguous). It uses no sandbox slot.
+- Snapshots: `sim_snapshot(sandbox_id, label=None)` saves the board (a pending decision
+  included) inside the sandbox's own worker and answers its id (`s1`, `s2`, ...);
+  `sim_restore(sandbox_id, snapshot)` (id or label) puts a fresh copy back, so the snapshot can be
+  restored again after acting. A label used again replaces that snapshot. Board mode only, at most
+  `MTG_SIM_MAX_SNAPSHOTS` per sandbox, gone when the sandbox ends. Every answer lists them under
+  `snapshots`.
 - Scenarios: `sim_run_script(script, keep=False)` builds the sandbox from `setup` and runs
   `steps` in one call, returning per-step results, the initial and final board and a diff. It
   stops at the first refused act, at a decision the next step does not answer (`answers:
@@ -790,6 +802,7 @@ environment, no database and a memory cap.
   | `MTG_SIM_CLAUDE_EFFORT` | low | default effort of a Claude match seat |
   | `MTG_SIM_CLAUDE_MODELS` | claude-opus-5-5, claude-opus-5, claude-sonnet-5-5, claude-sonnet-5, claude-haiku-4-5 | allowed models (comma list) |
   | `MTG_SIM_RESULT_TTL_S` | 86400 | how long finished batch and match results are kept |
+  | `MTG_SIM_MAX_SNAPSHOTS` | 16 | snapshots per sandbox (`sim_snapshot`) |
 
 ### Preset entry (operator)
 
@@ -824,6 +837,22 @@ is the same file; the value goes to the preset env) is in `deploy/k8s/README.md`
 - Questions about an interaction or a position: `sim_new` with a minimal board (only the cards
   that matter), `sim_act` with `dry_run` first, then the real act, `sim_state` to read the board,
   `sim_end` when done. Free the slot always.
+- A board photo with "what should I play now?": read the zones from the photo (both battlefields
+  with tapped state and counters, graveyards, exile, your hand, life totals, the phase if told;
+  crop per zone when cards are small) and verify every name with `sim_card_lookup`. Ask the user
+  to confirm the recognised cards only when a card is uncertain (`not_found`, status `fuzzy`, a doubtful read);
+  otherwise proceed. Build only what the player can see with `sim_new` (`tapped`, `counters`,
+  `face_up`, and `library_filler` so a draw step does not lose to an empty library); never invent
+  the opponent's hidden hand. `sim_snapshot` the root and compare the candidate plays inside that
+  one sandbox: `sim_act` the steps of the current turn, read the end state (life, board, cards,
+  mana left), `sim_restore` the root and try the next. The opponent's next turn is not
+  simulated: reason about it in text. If the user names the opponent's deck or archetype, test
+  each line against a few likely answers from it: pass priority to the opponent, `sim_snapshot`,
+  `sim_act` `add_card` (the answer, `player` the opponent, `zone` hand, plus lands on the
+  battlefield for mana; the answer carries the new `card_id`), cast it as the opponent, read the
+  result and `sim_restore` for the next answer or line. Reply with the recognised board and its
+  doubts, the best play as ordered steps, a short why, the alternatives and answers tried, the
+  expected opponent turn and caveats (unsupported cards, guesses).
 - Reproducing a game someone described: write the scenario and call `sim_run_script`.
 - An MTGO log the user pasted: `sim_import_mtgo_log`, read `unsupported` and `board_caveats`,
   tell the user what could not be used and fix dead creatures and life totals in the setup, then

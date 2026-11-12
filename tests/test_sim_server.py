@@ -71,6 +71,11 @@ def test_tool_docs_name_the_actions_spec_and_labels(sim):
     assert "@" in docs["sim_act"] and "players" in docs["sim_new"]
 
 
+def test_sim_new_doc_names_library_filler_and_face_up(sim):
+    doc = {t.name: t.description for t in asyncio.run(sim.list_tools())}["sim_new"]
+    assert "library_filler" in doc and "face_up" in doc and "empty library" in doc
+
+
 def test_full_interaction_over_tools_and_no_credentials_leak(sim):
     answers = []
     created = call(sim, "sim_new", spec=BOLT_SPEC)
@@ -104,6 +109,35 @@ def test_full_interaction_over_tools_and_no_credentials_leak(sim):
     stray = set(re.findall(r"\b[0-9a-f]{32}\b", text)) - _card_ids(answers)
     stray -= {s.removeprefix("sim-") for s in re.findall(r"sim-[0-9a-f]{32}", text)}
     assert not stray, [text[text.index(x) - 80 : text.index(x) + 40] for x in stray]
+
+
+def test_snapshot_and_restore_over_tools(sim, monkeypatch):
+    monkeypatch.setenv("MTG_SIM_MAX_SNAPSHOTS", "1")  # read by the worker at start
+    created = call(sim, "sim_new", spec=BOLT_SPEC)
+    sid = created["sandbox"]["id"]
+    snap = call(sim, "sim_snapshot", sandbox_id=sid, label="root")
+    assert snap["result"] == {"snapshot": "s1", "label": "root"}
+    over = call(sim, "sim_snapshot", sandbox_id=sid)
+    assert (
+        over["result"]["allowed"] is False and "MTG_SIM_MAX_SNAPSHOTS" in over["result"]["reason"]
+    )
+    body = {"card_id": "@bolt", "targets": ["@bears"]}
+    call(sim, "sim_act", sandbox_id=sid, action="cast", player="alice", body=body)
+    call(sim, "sim_act", sandbox_id=sid, action="pass", player="alice")
+    call(sim, "sim_act", sandbox_id=sid, action="pass", player="bob")
+    back = call(sim, "sim_restore", sandbox_id=sid, snapshot="root")
+    assert back["state"] == created["state"]
+    assert call(sim, "sim_state", sandbox_id=sid)["snapshots"][0]["label"] == "root"
+    assert call(sim, "sim_end", sandbox_id=sid) == {"ended": True}
+    assert "No sandbox" in call(sim, "sim_restore", sandbox_id=sid, snapshot="root")["error"]
+
+
+def test_card_lookup_tool_needs_no_sandbox(sim):
+    out = call(sim, "sim_card_lookup", names=["Lightning Bolt", "Grizzly Bears"])
+    assert [c["name"] for c in out["cards"]] == ["Lightning Bolt", "Grizzly Bears"]
+    assert all(c["engine_support"] == "handled" for c in out["cards"])
+    too_many = call(sim, "sim_card_lookup", names=["Shock"] * 41)
+    assert "1 to 40 names" in too_many["error"]
 
 
 def _card_ids(value: Any) -> set[str]:
@@ -315,3 +349,14 @@ def test_baseline_tools_are_registered_with_the_flag(sim):
     names = {t.name for t in asyncio.run(sim.list_tools())}
     assert {"sim_match", "sim_match_status", "sim_play_new"} <= names
     assert "sim_play_new" in sim.instructions
+
+
+def test_board_photo_guide_is_in_the_instructions_and_the_readme():
+    from magic_cards_model_api.sim.server import INSTRUCTIONS
+
+    readme = (Path(__file__).resolve().parent.parent / "README.md").read_text()
+    guide = readme[readme.index("### Usage guide (for the agent)") :]
+    for text in (INSTRUCTIONS, guide):
+        assert "photo" in text
+        for step in ("sim_card_lookup", "sim_new", "sim_snapshot", "sim_restore", "library_filler"):
+            assert step in text, step

@@ -115,3 +115,8 @@ def test_claude_seat_defaults_and_overrides():
     )
     assert (lim.claude_model, lim.claude_effort) == ("claude-sonnet-5", "high")
     assert lim.claude_models == ("claude-sonnet-5", "claude-opus-5")
+
+
+def test_max_snapshots_defaults_to_16_and_reads_the_env():
+    assert SimLimits.from_env({}).max_snapshots == 16
+    assert SimLimits.from_env({"MTG_SIM_MAX_SNAPSHOTS": "4"}).max_snapshots == 4

@@ -54,7 +54,9 @@ def test_request_refuses_an_unsafe_path_value_and_create_leaves_no_game(sandbox,
             "P",
             (),
             {
-                "players": [type("Pl", (), {"name": "alice", "life": 20})()],
+                "players": [
+                    type("Pl", (), {"name": "alice", "life": 20, "library_filler": None})()
+                ],
                 "active_player": None,
                 "step": "precombat_main",
                 "cards": [],

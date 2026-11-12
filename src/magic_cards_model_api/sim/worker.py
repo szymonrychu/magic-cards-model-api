@@ -138,7 +138,7 @@ def main() -> None:
 
     limit_mb = SimLimits.from_env().worker_max_rss_mb
     test_ops = os.environ.get("MTG_SIM_TEST_OPS") == "1"
-    game = SandboxGame(TestClient(app))
+    game = SandboxGame(TestClient(app), max_snapshots=SimLimits.from_env().max_snapshots)
 
     def _play_budget(args: dict[str, Any]) -> float:
         return float(args.get("budget_s", SimLimits.from_env().call_timeout_s - 3))
@@ -212,6 +212,10 @@ def main() -> None:
             # After an accepted action the baseline plays on until it is the chat's move.
             accepted = done["result"].get("allowed") is not False and not args.get("dry_run")
             return game.settle_play(done, _play_budget(args), advance=accepted)
+        if op == "snapshot":
+            return game.snapshot(args.get("label"))
+        if op == "restore":
+            return game.restore(args["snapshot"])
         if op == "end":
             game.close()
             return {"ended": True}

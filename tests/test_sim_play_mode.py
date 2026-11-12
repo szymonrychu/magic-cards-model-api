@@ -268,3 +268,10 @@ def test_opponent_error_on_state_read_keeps_the_state(game, monkeypatch):
     monkeypatch.setattr(game._opponent, "step", boom)
     out = game.settle_play(game.state(), 30)
     assert "RuntimeError" in out["note"] and "state" in out
+
+
+def test_play_mode_refuses_snapshots(game):
+    start(game, seed=1, me_first=True)
+    out = game.snapshot("root")
+    assert out["result"]["allowed"] is False and "board mode" in out["result"]["reason"]
+    assert game.restore("root")["result"]["allowed"] is False

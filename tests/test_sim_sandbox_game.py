@@ -236,3 +236,191 @@ def test_add_card_with_a_label_registers_it_for_later_acts(sandbox):
     assert again["result"] == {"allowed": False, "reason": "duplicate label shock"}
     assert "Shock" in names(sandbox.state()["state"]["players"]["alice"]["hand"])
     assert names(sandbox.state()["state"]["players"]["alice"]["hand"]).count("Shock") == 1
+
+
+def _advance_to_alices_draw(sandbox):
+    """From bob's end step through cleanup, untap and upkeep into alice's draw step."""
+    out = None
+    for _ in range(4):
+        out = sandbox.act("advance", None, {})
+    return out["state"]
+
+
+EMPTY_LIBRARY_SPEC = {
+    "players": [{"name": "alice"}, {"name": "bob"}],
+    "active_player": "bob",
+    "step": "end_step",
+    "cards": [{"card": "Grizzly Bears", "player": "alice", "zone": "battlefield"}],
+}
+
+
+def test_drawing_from_an_empty_library_loses_the_game(sandbox):
+    sandbox.create(EMPTY_LIBRARY_SPEC)
+    st = _advance_to_alices_draw(sandbox)
+    assert (st["step"], st["active_player"], st["winner"]) == ("draw", "alice", "bob")
+
+
+def test_library_filler_keeps_the_draw_step_alive(sandbox):
+    spec = {
+        **EMPTY_LIBRARY_SPEC,
+        "players": [
+            {"name": "alice", "library_filler": {"name": "Island", "count": 3}},
+            {"name": "bob"},
+        ],
+        "cards": [
+            *EMPTY_LIBRARY_SPEC["cards"],
+            {"card": "Shock", "player": "alice", "zone": "library", "position": "top"},
+        ],
+    }
+    out = sandbox.create(spec)
+    assert out["state"]["players"]["alice"]["library_count"] == 4
+    assert out["state"]["players"]["bob"]["library_count"] == 0
+    st = _advance_to_alices_draw(sandbox)
+    assert (st["step"], st["winner"]) == ("draw", None)
+    assert names(st["players"]["alice"]["hand"]) == ["Shock"]  # the spec card stays on top
+    assert st["players"]["alice"]["library_count"] == 3
+
+
+@pytest.mark.parametrize("count", [0, 61])
+def test_library_filler_count_is_bounded(sandbox, count):
+    spec = {"players": [{"name": "alice", "library_filler": {"name": "Island", "count": count}}]}
+    with pytest.raises(ValueError, match="count"):
+        sandbox.create(spec)
+
+
+def test_face_down_card_is_marked_and_hidden_from_the_other_seat(sandbox):
+    """A foretold card sits face down in exile: the board marks it, bob's seat sees no name."""
+    out = sandbox.create(
+        {
+            "players": [{"name": "alice"}, {"name": "bob"}],
+            "cards": [
+                {"card": "Shock", "player": "alice", "zone": "exile", "face_up": False},
+                {"card": "Lightning Bolt", "player": "alice", "zone": "exile"},
+            ],
+        }
+    )
+    exile = {c["name"]: c for c in out["state"]["players"]["alice"]["exile"]}
+    assert exile["Shock"]["face_down"] is True
+    assert "face_down" not in exile["Lightning Bolt"]
+    status, view = sandbox._request("GET", "/api/games/{game_id}", uid=sandbox._seat_uids["bob"])
+    assert status == 200
+    seen = [c.get("name") for c in view["exile"]]
+    assert "Shock" not in seen and "Lightning Bolt" in seen
+
+
+def _board(answer):
+    return answer["state"]
+
+
+def _bolt_the_bears(sandbox):
+    sandbox.act("cast", "alice", {"card_id": "@bolt", "targets": ["@bears"]})
+    sandbox.act("pass", "alice", {})
+    return sandbox.act("pass", "bob", {})
+
+
+def test_restore_gives_back_the_snapshot_board_every_time(sandbox):
+    root = sandbox.create(BOLT_SPEC)
+    snap = sandbox.snapshot("root")
+    assert snap["result"] == {"snapshot": "s1", "label": "root"}
+    assert snap["snapshots"] == [{"id": "s1", "label": "root", "turn": 1, "step": "precombat_main"}]
+    after = _bolt_the_bears(sandbox)
+    assert names(_board(after)["players"]["bob"]["graveyard"]) == ["Grizzly Bears"]
+
+    back = sandbox.restore("root")
+    assert back["result"] == {"restored": "s1", "label": "root"}
+    assert _board(back) == _board(root)
+    # The restored game is independent: playing the line again leaves the snapshot intact.
+    again = _bolt_the_bears(sandbox)
+    assert _board(again) == _board(after)
+    assert _board(sandbox.restore("s1")) == _board(root)
+    assert _board(sandbox.state()) == _board(root)
+
+
+def test_restore_brings_back_a_pending_decision(sandbox):
+    sandbox.create(
+        {
+            "players": [{"name": "alice"}, {"name": "bob"}],
+            "cards": [
+                {"card": "Mind Rot", "player": "alice", "label": "rot"},
+                {"card": "Grizzly Bears", "player": "bob", "label": "bears"},
+                {"card": "Forest", "player": "bob"},
+                {"card": "Island", "player": "bob"},
+            ],
+            "mana_pool": {"alice": "BBB"},
+        }
+    )
+    sandbox.act("cast", "alice", {"card_id": "@rot", "targets": ["bob"]})
+    sandbox.act("pass", "alice", {})
+    pending = _board(sandbox.act("pass", "bob", {}))["pending_decision"]
+    assert pending["kind"] == "choose_cards"
+    sandbox.snapshot()
+    chosen = pending["cards"][:2]
+    done = sandbox.act("decide", "bob", {"card_ids": chosen})
+    assert done["result"].get("allowed") is not False, done["result"]
+    assert _board(done)["pending_decision"] is None
+    back = _board(sandbox.restore("s1"))
+    assert back["pending_decision"]["kind"] == "choose_cards"
+    assert len(back["players"]["bob"]["hand"]) == 3
+    again = sandbox.act("decide", "bob", {"card_ids": chosen})
+    assert again["result"].get("allowed") is not False, again["result"]
+    assert len(_board(again)["players"]["bob"]["graveyard"]) == 2
+
+
+def test_snapshot_cap_is_enforced_and_a_reused_label_replaces():
+    sandbox = SandboxGame(TestClient(app), max_snapshots=2)
+    try:
+        sandbox.create(BOLT_SPEC)
+        sandbox.snapshot("root")
+        sandbox.snapshot("line")
+        refused = sandbox.snapshot()
+        assert refused["result"]["allowed"] is False
+        assert "MTG_SIM_MAX_SNAPSHOTS" in refused["result"]["reason"]
+        _bolt_the_bears(sandbox)
+        replaced = sandbox.snapshot("line")
+        assert replaced["result"] == {"snapshot": "s2", "label": "line"}
+        assert [s["id"] for s in replaced["snapshots"]] == ["s1", "s2"]
+        restored = _board(sandbox.restore("line"))
+        assert names(restored["players"]["bob"]["graveyard"]) == ["Grizzly Bears"]
+    finally:
+        sandbox.close()
+
+
+def test_restore_of_an_unknown_snapshot_is_refused(sandbox):
+    sandbox.create(BOLT_SPEC)
+    out = sandbox.restore("nope")
+    assert out["result"]["allowed"] is False and "nope" in out["result"]["reason"]
+
+
+def test_a_new_board_forgets_the_snapshots(sandbox):
+    sandbox.create(BOLT_SPEC)
+    sandbox.snapshot("root")
+    out = sandbox.create(BOLT_SPEC)
+    assert "snapshots" not in out
+    assert sandbox.restore("root")["result"]["allowed"] is False
+
+
+def test_an_opponent_answer_can_be_added_mid_sandbox_and_restore_removes_it(sandbox):
+    sandbox.create(BOLT_SPEC)
+    sandbox.act("cast", "alice", {"card_id": "@bolt", "targets": ["@bears"]})
+    sandbox.act("pass", "alice", {})
+    sandbox.snapshot("bob-to-respond")
+    added = sandbox.act(
+        "add_card", None, {"card": "Lightning Bolt", "player": "bob", "zone": "hand"}
+    )
+    assert added["result"].get("allowed") is not False, added["result"]
+    card_id = added["result"]["added"]["card_id"]
+    assert names(_board(added)["players"]["bob"]["hand"]) == ["Lightning Bolt"]
+    sandbox.act("add_card", None, {"card": "Mountain", "player": "bob", "zone": "battlefield"})
+    cast = sandbox.act("cast", "bob", {"card_id": card_id, "targets": ["alice"]})
+    assert cast["result"].get("allowed") is not False, cast["result"]
+    assert len(_board(cast)["stack"]) == 2
+    back = _board(sandbox.restore("bob-to-respond"))
+    assert names(back["players"]["bob"]["hand"]) == []
+    assert len(back["stack"]) == 1
+
+
+def test_a_snapshot_label_must_be_safe_and_not_look_like_an_id(sandbox):
+    sandbox.create(BOLT_SPEC)
+    for bad in ("bad label", "s2"):
+        with pytest.raises(ValueError):
+            sandbox.snapshot(bad)
