@@ -10,10 +10,13 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    # Local suite takes ~211s and this job runs it twice (in-memory, then
-    # postgres); 35 minutes leaves generous headroom for a colder CI runner
-    # plus checkout and mise install on top of both passes.
-    timeout-minutes: 35
+    # This job runs the whole suite twice (in-memory, then postgres). Measured
+    # on PR #77: 24.5 and 34.3 min total, so 35 minutes cancelled the S2 merge
+    # run on main. The real-engine sim tests (tests/test_sim_*.py) cost about
+    # 187 s serial per pass (about 65 s at 3 workers), so they are not the
+    # cause and skipping them in the postgres pass would not buy enough
+    # margin; 60 minutes leaves headroom for a slow runner on both passes.
+    timeout-minutes: 60
     env:
       # The runner has 4 vCPUs; the tasks default to 6 xdist workers, which
       # oversubscribes it and tips several wall-time-sensitive tests over.
