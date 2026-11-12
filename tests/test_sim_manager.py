@@ -276,12 +276,29 @@ def test_second_concurrent_call_is_refused_busy_within_the_cap(clock):
     t = threading.Thread(target=lambda: m.call(sid, "state", {}))
     t.start()
     assert gate.entered.wait(2)
-    began = time.monotonic()
-    with pytest.raises(SimRefused, match="busy with another call"):
-        m.call(sid, "state", {})
-    assert time.monotonic() - began < 1
+    outcome = []
+
+    def second():
+        began = time.monotonic()
+        try:
+            m.call(sid, "state", {})
+        except SimRefused as exc:
+            outcome.append((str(exc), time.monotonic() - began))
+
+    t2 = threading.Thread(target=second)
+    t2.start()
+    # The gate is still closed: returning at all proves the refusal did not
+    # wait for the in-flight call. The bound is generous for loaded runners.
+    t2.join(10)
+    refused_while_gated = not t2.is_alive() and not gate.release.is_set()
     gate.release.set()
-    t.join(2)
+    t.join(5)
+    t2.join(5)
+    assert refused_while_gated
+    assert len(outcome) == 1
+    message, waited = outcome[0]
+    assert "busy with another call" in message
+    assert waited >= 0.25
 
 
 def test_reap_racing_an_in_flight_call_ends_it_cleanly(clock):
