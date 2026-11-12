@@ -349,3 +349,14 @@ def test_baseline_tools_are_registered_with_the_flag(sim):
     names = {t.name for t in asyncio.run(sim.list_tools())}
     assert {"sim_match", "sim_match_status", "sim_play_new"} <= names
     assert "sim_play_new" in sim.instructions
+
+
+def test_board_photo_guide_is_in_the_instructions_and_the_readme():
+    from magic_cards_model_api.sim.server import INSTRUCTIONS
+
+    readme = (Path(__file__).resolve().parent.parent / "README.md").read_text()
+    guide = readme[readme.index("### Usage guide (for the agent)") :]
+    for text in (INSTRUCTIONS, guide):
+        assert "photo" in text
+        for step in ("sim_card_lookup", "sim_new", "sim_snapshot", "sim_restore", "library_filler"):
+            assert step in text, step

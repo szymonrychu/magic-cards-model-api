@@ -60,6 +60,19 @@ Always relay support_warnings (cards the engine does not fully support) to the u
 any result that depends on them as unreliable.
 A refused call returns {"error": ...} or {"allowed": false, "reason": ...}: read it, never retry
 it blindly, and never loop on a refusal.
+
+Board photo, "what should I play now?":
+1. Read the photo (crop per zone when small): both battlefields (tapped, counters, tokens),
+   graveyards, exile, your hand, life totals, the phase if told. The opponent's hand is unknown:
+   never invent cards for it.
+2. Verify every name with sim_card_lookup; flag not_found or doubtful cards, do not guess.
+3. Build it with sim_new (tapped, counters, face_up; library_filler so draws do not lose),
+   then sim_snapshot the root.
+4. Per candidate line: sim_act the steps, read the end state (life, board, cards, mana left),
+   then sim_restore the root and try the next. Weigh what the opponent's open mana and colours
+   could answer.
+5. Reply: the recognised board with doubts, the best play as ordered steps, a short why, the
+   alternatives tried, caveats (support_warnings, guesses). sim_end when done.
 """
 
 BASELINE_INSTRUCTIONS = """\
