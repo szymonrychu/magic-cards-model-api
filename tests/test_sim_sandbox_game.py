@@ -236,3 +236,73 @@ def test_add_card_with_a_label_registers_it_for_later_acts(sandbox):
     assert again["result"] == {"allowed": False, "reason": "duplicate label shock"}
     assert "Shock" in names(sandbox.state()["state"]["players"]["alice"]["hand"])
     assert names(sandbox.state()["state"]["players"]["alice"]["hand"]).count("Shock") == 1
+
+
+def _advance_to_alices_draw(sandbox):
+    """From bob's end step through cleanup, untap and upkeep into alice's draw step."""
+    out = None
+    for _ in range(4):
+        out = sandbox.act("advance", None, {})
+    return out["state"]
+
+
+EMPTY_LIBRARY_SPEC = {
+    "players": [{"name": "alice"}, {"name": "bob"}],
+    "active_player": "bob",
+    "step": "end_step",
+    "cards": [{"card": "Grizzly Bears", "player": "alice", "zone": "battlefield"}],
+}
+
+
+def test_drawing_from_an_empty_library_loses_the_game(sandbox):
+    sandbox.create(EMPTY_LIBRARY_SPEC)
+    st = _advance_to_alices_draw(sandbox)
+    assert (st["step"], st["active_player"], st["winner"]) == ("draw", "alice", "bob")
+
+
+def test_library_filler_keeps_the_draw_step_alive(sandbox):
+    spec = {
+        **EMPTY_LIBRARY_SPEC,
+        "players": [
+            {"name": "alice", "library_filler": {"name": "Island", "count": 3}},
+            {"name": "bob"},
+        ],
+        "cards": [
+            *EMPTY_LIBRARY_SPEC["cards"],
+            {"card": "Shock", "player": "alice", "zone": "library", "position": "top"},
+        ],
+    }
+    out = sandbox.create(spec)
+    assert out["state"]["players"]["alice"]["library_count"] == 4
+    assert out["state"]["players"]["bob"]["library_count"] == 0
+    st = _advance_to_alices_draw(sandbox)
+    assert (st["step"], st["winner"]) == ("draw", None)
+    assert names(st["players"]["alice"]["hand"]) == ["Shock"]  # the spec card stays on top
+    assert st["players"]["alice"]["library_count"] == 3
+
+
+@pytest.mark.parametrize("count", [0, 61])
+def test_library_filler_count_is_bounded(sandbox, count):
+    spec = {"players": [{"name": "alice", "library_filler": {"name": "Island", "count": count}}]}
+    with pytest.raises(ValueError, match="count"):
+        sandbox.create(spec)
+
+
+def test_face_down_card_is_marked_and_hidden_from_the_other_seat(sandbox):
+    """A foretold card sits face down in exile: the board marks it, bob's seat sees no name."""
+    out = sandbox.create(
+        {
+            "players": [{"name": "alice"}, {"name": "bob"}],
+            "cards": [
+                {"card": "Shock", "player": "alice", "zone": "exile", "face_up": False},
+                {"card": "Lightning Bolt", "player": "alice", "zone": "exile"},
+            ],
+        }
+    )
+    exile = {c["name"]: c for c in out["state"]["players"]["alice"]["exile"]}
+    assert exile["Shock"]["face_down"] is True
+    assert "face_down" not in exile["Lightning Bolt"]
+    status, view = sandbox._request("GET", "/api/games/{game_id}", uid=sandbox._seat_uids["bob"])
+    assert status == 200
+    seen = [c.get("name") for c in view["exile"]]
+    assert "Shock" not in seen and "Lightning Bolt" in seen

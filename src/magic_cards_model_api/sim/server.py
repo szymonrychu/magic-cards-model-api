@@ -67,10 +67,14 @@ Or run engine-only baseline batches with sim_match (poll sim_match_status).
 """
 
 _SPEC_DOC = (
-    'spec shape: {"players": [{"name": "alice", "life": 20}, ...], "active_player": "alice",'
-    ' "step": "precombat_main", "cards": [{"card": "Lightning Bolt", "player": "alice",'
-    ' "zone": "hand", "label": "bolt", "counters": {}, "damage": 0, "summoning_sick": false}],'
-    ' "mana_pool": {"alice": "R"}}. Unknown fields are refused.'
+    'spec shape: {"players": [{"name": "alice", "life": 20, "library_filler": {"name": "Island",'
+    ' "count": 20}}, ...], "active_player": "alice", "step": "precombat_main", "cards": [{"card":'
+    ' "Lightning Bolt", "player": "alice", "zone": "hand", "label": "bolt", "tapped": false,'
+    ' "face_up": true, "counters": {}, "damage": 0, "summoning_sick": false}],'
+    ' "mana_pool": {"alice": "R"}}. Unknown fields are refused. Libraries start empty and a'
+    " player who draws from an empty library loses: give library_filler (1-60 copies under the"
+    " library, below any library cards of the spec) when a line crosses a draw step."
+    " face_up=false puts a card face down (answers mark it face_down)."
 )
 _LABELS_DOC = (
     'Labels: a card with "label": "x" is addressed as "@x" anywhere a card id is expected,'

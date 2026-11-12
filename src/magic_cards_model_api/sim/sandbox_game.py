@@ -82,9 +82,20 @@ class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+MAX_LIBRARY_FILLER = 60
+
+
+class LibraryFiller(_Strict):
+    """`count` copies of one card put under the library, so draw steps do not lose the game."""
+
+    name: str
+    count: int = Field(ge=1, le=MAX_LIBRARY_FILLER)
+
+
 class SpecPlayer(_Strict):
     name: str
     life: int = 20
+    library_filler: LibraryFiller | None = None
 
     @field_validator("name")
     @classmethod
@@ -98,6 +109,7 @@ class SpecCard(_Strict):
     zone: str = "hand"
     label: str | None = None
     tapped: bool = False
+    face_up: bool = True
     position: str | None = None
     counters: dict[str, int] = Field(default_factory=dict)
     damage: int = 0
@@ -156,6 +168,9 @@ def _card_entry(card: dict[str, Any], label_of: dict[str, str]) -> dict[str, Any
     if card["id"] in label_of:
         out["label"] = label_of[card["id"]]
     out["name"] = card["name"]
+    if card.get("face_up") is False:  # the admin view names it in card_name only
+        out["name"] = card.get("card_name") or card["name"]
+        out["face_down"] = True
     if card.get("tapped"):
         out["tapped"] = True
     if card.get("counters"):
@@ -309,6 +324,14 @@ class SandboxGame:
         try:
             for card in parsed.cards:
                 self._add_spec_card(card)
+            for player in parsed.players:
+                if (filler := player.library_filler) is None:
+                    continue
+                spare = SpecCard(
+                    card=filler.name, player=player.name, zone="library", position="bottom"
+                )
+                for _ in range(filler.count):
+                    self._add_spec_card(spare)
             for player, mana in parsed.mana_pool.items():
                 floating: dict[str, int] = {}
                 for color in mana.upper():
@@ -329,6 +352,7 @@ class SandboxGame:
                 "zone": card.zone,
                 "position": card.position,
                 "tapped": card.tapped,
+                "face_up": card.face_up,
             },
         )["added"]
         card_id = added["card_id"]

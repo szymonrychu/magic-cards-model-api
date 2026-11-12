@@ -71,6 +71,11 @@ def test_tool_docs_name_the_actions_spec_and_labels(sim):
     assert "@" in docs["sim_act"] and "players" in docs["sim_new"]
 
 
+def test_sim_new_doc_names_library_filler_and_face_up(sim):
+    doc = {t.name: t.description for t in asyncio.run(sim.list_tools())}["sim_new"]
+    assert "library_filler" in doc and "face_up" in doc and "empty library" in doc
+
+
 def test_full_interaction_over_tools_and_no_credentials_leak(sim):
     answers = []
     created = call(sim, "sim_new", spec=BOLT_SPEC)
