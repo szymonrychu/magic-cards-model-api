@@ -665,7 +665,9 @@ environment, no database and a memory cap.
 - Auth: `Authorization: Bearer <MTG_SIM_TOKEN>`. Unset token answers 503 (disabled), a wrong or
   missing one 401. The token comes from the `mtg-sim` Secret; it is not `OPS_TOKEN`.
 - Reach: in-cluster only. `/sim` is denied at the public ingresses like `/metrics`.
-- Tools: `sim_new`, `sim_state`, `sim_legal_actions`, `sim_act`, `sim_run_script`, `sim_play_new`, `sim_end`, `sim_match`, `sim_match_status`.
+- Tools: `sim_new`, `sim_state`, `sim_legal_actions`, `sim_act`, `sim_run_script`,
+  `sim_import_mtgo_log`, `sim_play_new`, `sim_end`, `sim_match`, `sim_match_status`,
+  `sim_match_claude_start`, `sim_match_claude_status`.
   Cards carry labels (`"label": "bolt"` in the spec, `"@bolt"` in action bodies).
 - Scenarios: `sim_run_script(script, keep=False)` builds the sandbox from `setup` and runs
   `steps` in one call, returning per-step results, the initial and final board and a diff. It
@@ -696,8 +698,9 @@ environment, no database and a memory cap.
   `unavailable` (lookup failed), and then `support_note` says results are not reliable. Caveats: the baseline plays weakly, so rates say
   little about real matchups, and a baseline game measured 85-140 s on the small fixture
   decks, and the bundled 45c_aggro vs 45c_control finished 0 of 10 games in 300 s (about 0.55 s
-  per step). At the default 300 s wall-clock cap (`MTG_SIM_MATCH_WALL_S`, configurable by env)
-  a match therefore usually returns few or no finished games: status `capped` returns the
+  per step). The default wall-clock cap is 1500 s (about 25 min, `MTG_SIM_MATCH_WALL_S`,
+  configurable by env; owner decision Q7), so 10 games normally finish and the chat polls
+  `sim_match_status` meanwhile; slow decks can still hit the cap: status `capped` returns the
   partial results of the finished games. Finished batches are kept
   86400 s (`MTG_SIM_RESULT_TTL_S`).
 - Play mode: `sim_play_new(deck_me, deck_opponent, seed=None, me_first=None)` starts a game from
@@ -711,10 +714,90 @@ environment, no database and a memory cap.
   playing (call `sim_state` again; each call is bounded by the call limit) or that nobody can
   move (consider `concede`). The same `support_warnings`, `support_status` and `support_note`
   rules as the batches apply, covering both whole decks.
-- Caps (env `MTG_SIM_*`, see `sim/config.py`): one sandbox slot, 1800 s idle TTL, 25 s per call,
-  1024 MB worker RSS, 10 games and 300 s per batch, one batch at a time.
+- MTGO logs: `sim_import_mtgo_log(log_text, upto_turn=None, run=False)` turns an MTGO game log
+  (the client's `Match_GameLog` text, or the copied log) into a `sim_run_script` scenario. A log
+  hides hands and libraries, so it is not replayed action by action: the board at the start of
+  `upto_turn` (default the last turn; turns count across both players, 1, 2, 3...) is rebuilt
+  and that turn's own lands, casts, activations, attacks and blocks become steps. Only the
+  first game of a log is imported; lines of later games come back as unsupported with the reason
+  "later game in the same log; import one game at a time", so split a multi-game log first.
+  Limits: `log_text` over 1,000,000 characters is refused, an entry over 2000 characters is
+  never matched, and at most 200 unsupported lines (300 characters each) are echoed, the rest
+  only counted in `unsupported_omitted`. Exactly two players are required. Every line that could
+  not be used is listed in `unsupported` with `line_no`, `text` and `reason`; nothing is dropped
+  silently. `board_caveats`: MTGO logs carry no life changes, damage or deaths, so creatures that
+  died may still be on the rebuilt battlefield and life totals stay at 20 unless a logged line
+  changes them. Correct the setup before trusting a result. `run=true` also runs the scenario
+  (it uses the sandbox slot and ends it) and adds `run` with the `sim_run_script` answer.
+- Claude matches: `sim_match_claude_start(deck_a, deck_b, seed=None)` starts one game between two
+  Claude AI seat Jobs (kubernetes seat mode only) and answers a `match_id` at once;
+  `sim_match_claude_status(match_id)` answers from the last background check (every 30 s). One
+  match at a time. A game takes about 33-55 min, and the match is bounded by the seat deadline
+  (`MTG_SIM_CLAUDE_DEADLINE_S`), not by the engine-only batch cap.
+- Caps, all read by `sim/config.py` (`SimLimits.from_env`) from the environment of the
+  `mtg-stack` pod:
 
-The full guide lands with slice S7.
+  | Env | Default | Meaning |
+  |---|---|---|
+  | `MTG_SIM_TOKEN` | none | bearer token; unset refuses every call (503) |
+  | `MTG_SIM_MAX_SANDBOXES` | 1 | live sandboxes (also play games) at once |
+  | `MTG_SIM_SANDBOX_IDLE_TTL_S` | 1800 | idle seconds before a sandbox is reaped |
+  | `MTG_SIM_CALL_TIMEOUT_S` | 25 | a tool call never blocks longer; long work answers `running` |
+  | `MTG_SIM_MAX_MATCH_GAMES` | 10 | games per `sim_match` |
+  | `MTG_SIM_MATCH_WALL_S` | 1500 | wall clock of one engine-only batch; set by env (Q7 decided 1500 s) |
+  | `MTG_SIM_MAX_BATCHES` | 1 | engine-only batches at once |
+  | `MTG_SIM_MAX_SCRIPT_STEPS` | 200 | steps of one `sim_run_script` scenario |
+  | `MTG_SIM_WORKER_MAX_RSS_MB` | 1024 | resident memory cap of a sim worker process |
+  | `MTG_SIM_MAX_CLAUDE_MATCHES` | 1 | Claude matches at once |
+  | `MTG_SIM_CLAUDE_DEADLINE_S` | 14400 | seat deadline of a Claude match (not the batch cap) |
+  | `MTG_SIM_RESULT_TTL_S` | 86400 | how long finished batch and match results are kept |
+
+### Preset entry (operator)
+
+The tools reach an agent through its preset. Add this to the `mtg`, `marek-mtg` and any future
+MTG preset (the orchestrator or a human applies it). The `mcp_servers` entry and the env vault ref reach
+new sessions only; existing MTG sessions must be recreated (`session_patch` does not change
+vault refs). Claude Code expands `${MTG_SIM_TOKEN}` in the header from the session env, which
+the vault entry fills:
+
+```json
+"wrapper": {
+  "mcp_servers": {
+    "mtg-sim": {
+      "type": "http",
+      "url": "http://mtg-stack.mtg-engine.svc.cluster.local:8000/sim/mcp",
+      "headers": {"Authorization": "Bearer ${MTG_SIM_TOKEN}"}
+    }
+  }
+},
+"env": {"MTG_SIM_TOKEN": {"vault": "<agents-vault entry id>", "env": "MTG_SIM_TOKEN"}}
+```
+
+If the preset sets `wrapper.permissions.allow`, a human must add `mcp__mtg-sim__*` there:
+agents may not widen their own allow lists. Creating and rotating the token (Secret `mtg-sim`
+plus the matching vault entry) is in `deploy/k8s/README.md`.
+
+### Usage guide (for the agent)
+
+- Questions about an interaction or a position: `sim_new` with a minimal board (only the cards
+  that matter), `sim_act` with `dry_run` first, then the real act, `sim_state` to read the board,
+  `sim_end` when done. Free the slot always.
+- Reproducing a game someone described: write the scenario and call `sim_run_script`.
+- An MTGO log the user pasted: `sim_import_mtgo_log`, read `unsupported` and `board_caveats`,
+  tell the user what could not be used and fix dead creatures and life totals in the setup, then
+  call again with `run=true` (or feed `scenario` to `sim_run_script`).
+- List against list: `sim_match`; if it answers `running`, poll `sim_match_status` every 20 s or
+  so. Say that the baseline plays weakly and that a `capped` batch is partial.
+- "Let me play it": `sim_play_new`, keep with `mulligan` `{"take": false}`, play with `sim_act`
+  as `you`, finish with `sim_end`.
+- A Claude-vs-Claude match only when the user accepts 33-55 min per game:
+  `sim_match_claude_start`, then poll `sim_match_claude_status` every few minutes (about 300 s),
+  never in a tight loop.
+- Always relay `support_warnings` (and `support_note`) to the user. Never claim a result for a
+  card the engine runs as silent; say the result is unreliable.
+- When a tool refuses with "slot in use" (or a batch or match is already running), tell the
+  user, say how long the holder has left, and retry later; do not loop.
+- Tool answers never contain admin keys or seat uids; do not ask for them.
 
 ## Run it
 

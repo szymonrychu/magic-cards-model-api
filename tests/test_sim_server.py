@@ -277,3 +277,11 @@ def test_match_refusals_come_back_as_text(match_sim):
     out = call(match_sim, "sim_match", deck_a="a\nb", deck_b="a\nb", games=99)
     assert "MTG_SIM_MAX_MATCH_GAMES" in out["error"]
     assert "error" in call(match_sim, "sim_match_status", batch_id="batch-unknown")
+
+
+def test_readme_lists_every_sim_tool(sim):
+    readme = (Path(__file__).resolve().parent.parent / "README.md").read_text()
+    start = readme.index("## Chat simulation MCP")
+    section = readme[start : readme.index("\n## ", start + 1)]
+    missing = [t.name for t in asyncio.run(sim.list_tools()) if t.name not in section]
+    assert not missing, f"README sim section lacks tools: {missing}"

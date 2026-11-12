@@ -192,7 +192,7 @@ def test_second_batch_is_refused_while_one_runs():
         batches.start(RED, GREEN, 2, 1)
     msg = str(exc.value)
     assert msg.startswith("A batch is already running (about ")
-    assert "s left of its 300 s cap). Poll it or retry later." in msg
+    assert "s left of its 1500 s cap). Poll it or retry later." in msg
     made[0].release.set()
     assert batches.status(first, 5)["status"] == "done"
     assert batches.start(RED, GREEN, 2, 1) != first  # the slot is free again
