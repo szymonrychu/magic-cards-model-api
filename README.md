@@ -755,10 +755,9 @@ environment, no database and a memory cap.
 ### Preset entry (operator)
 
 The tools reach an agent through its preset. Add this to the `mtg`, `marek-mtg` and any future
-MTG preset (the orchestrator or a human applies it). The `mcp_servers` entry and the env vault ref reach
-new sessions only; existing MTG sessions must be recreated (`session_patch` does not change
-vault refs). Claude Code expands `${MTG_SIM_TOKEN}` in the header from the session env, which
-the vault entry fills:
+MTG preset (the orchestrator or a human applies it). The `mcp_servers` entry and the `env` entry reach
+new sessions only; existing MTG sessions must be recreated. Claude Code expands
+`${MTG_SIM_TOKEN}` in the header from the session env, which the plain `env` entry fills:
 
 ```json
 "wrapper": {
@@ -770,12 +769,16 @@ the vault entry fills:
     }
   }
 },
-"env": {"MTG_SIM_TOKEN": {"vault": "<agents-vault entry id>", "env": "MTG_SIM_TOKEN"}}
+"env": {"MTG_SIM_TOKEN": {"value": "<token>", "expand": false}}
 ```
+
+The token is a plain preset env, not an agents-vault entry (decision Q8=A, T-123): it is an
+internal token the hive generates itself, agents cannot create vault entries, and the value is
+accepted as readable in preset views and the orchestrator database.
 
 If the preset sets `wrapper.permissions.allow`, a human must add `mcp__mtg-sim__*` there:
 agents may not widen their own allow lists. Creating and rotating the token (Secret `mtg-sim`
-plus the matching vault entry) is in `deploy/k8s/README.md`.
+is the same file; the value goes to the preset env) is in `deploy/k8s/README.md`.
 
 ### Usage guide (for the agent)
 
