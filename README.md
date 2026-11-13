@@ -962,7 +962,7 @@ Access needed in namespace `mtg-engine`: `get deployments`, `get secrets` and
 says so if it is missing). The preset requirement (the `mtg-sim` MCP server in the
 agent's preset) is under "Preset entry (operator)" above.
 
-Deploy and smoke owner: see T-201 decision 559 (pending)
+Deploy and smoke owner: the mtg-sim-retro session (T-201 decision 559).
 
 ## How it works
 

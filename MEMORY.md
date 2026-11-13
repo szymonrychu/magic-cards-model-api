@@ -3528,8 +3528,8 @@ Retroactive audit (2026-09-26) of every change to pre-existing test content in a
   and the guard names the culprit. The other candidate, a separate CI job with pytest-random-order,
   would cost an extra runner for ~15-20 min and leave the default runs deterministic. Wall-clock
   tests (`test_buddy_drafts` 2.5 s budget, sim worker start timeouts, the mtgo time budget) fail under
-  CPU load regardless of order; they are not ordering bugs and `tests/wrapper/test_exit_lifecycle.py`
-  needs `pkill`, missing in some containers.
+  CPU load regardless of order; they are not ordering bugs (the ones the first shuffled runs hit
+  are fixed; see the shuffled-order flakes entry below).
 - 2026-11-13 - `test_a_multi_call_run_still_stops_at_its_own_declare_attackers_step` is deterministic
   (Q3=A). It asserted `calls > 1` while bob ran as a free-running `Opponent` thread, so whether alice
   ever saw "bob holds priority" (a hand-back, hence a second `pass_until` call) was scheduler luck
@@ -3543,7 +3543,7 @@ Retroactive audit (2026-09-26) of every change to pre-existing test content in a
   Secret `mtg-agent` (never values), and runs `scripts/smoke_deploy.py` in the pod over `kubectl exec -i`
   (health, MCP tool list with the pod's own `MTG_SIM_TOKEN`, lobby default claude-opus-5-5/low, seat Job
   without `CLAUDE_CODE_EFFORT_LEVEL`). Non-zero on any failure; the token is never printed and is
-  scrubbed from error text. Owner: see T-201 decision 559 (pending); the leader fills in the name.
+  scrubbed from error text. Owner: the mtg-sim-retro session (T-201 decision 559).
   mise renders `{{ }}` as templates in `run`, so the Secret key go-template is wrapped in `{% raw %}`.
 - 2026-11-13 - preset check for the mtg-sim MCP server: the `mtg` and `marek-mtg` presets both already
   have `mcp_servers.mtg-sim`, so no preset change was needed. `marek-mtg` allows `mcp__mtg-sim__*`;
@@ -3559,3 +3559,22 @@ Retroactive audit (2026-09-26) of every change to pre-existing test content in a
   tears down, so the guard diffed the singleton before against a throwaway `PostgresRepository`
   after and blamed `test_review[...-postgres]` for another test's leftover rows. The guard now
   captures the singleton at import (`_SINGLETON_STORE`) and never reads the patched name.
+- 2026-11-13 - shuffled-order flakes found by the first full `-p randomly` runs (seeds 101/202/303),
+  all fixed test-side, no production change. (1) `bob_acts_then_passes` in `tests/test_autopass.py`
+  was a fire-and-forget 4000-poll thread joined for 1s: it kept polling (into 404s once the game was
+  deleted) and logging `httpx` lines into whatever test ran next on the worker. Reproduced on main
+  (`test_activity.py::test_a_half_written_line_is_held_until_its_newline_arrives`). It is now a context
+  manager that stops, joins and asserts the thread is gone, and exits on 404; the `agent_log` fixture
+  in `tests/wrapper/test_activity.py` also reads only the `agent` logger, which is what it names.
+  (2) `test_a_run_does_not_echo_its_own_declare_blockers_decision_when_the_commit_is_slow` slowed
+  every `_call_watching_for_self_decision` call, priority passes included (2.4s of sleep per lap, so
+  the 5s per-call bound failed under load), and never reached `perform_declare` at all: bob had no
+  creature, so "declare nobody" was forced and `auto_answer_forced` answered it. bob now has a
+  Llanowar Elves, only `perform_declare` is slowed, and the test asserts it was. (3)
+  `test_a_hand_back_that_actually_waited_says_how_long_and_how_many` ran a real 0.3s wait; a slow
+  first call left no time to retry. It now jumps seatkit's own clock after the second internal call.
+  (4) the driver's checkout-lock review test bounded the handover at 0.4s against a 0.5s review; it
+  now holds the review on an Event (`wrapper_review_gate` in `tests/driver/world.py`) and asserts no
+  review landed before the handover answered. (5) `test_exit_lifecycle.py` used `pkill`, missing in
+  the agent pods (procps), so it failed on every run there; it now finds the stub child through
+  `/proc` and sends SIGTERM itself.
