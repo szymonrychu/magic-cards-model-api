@@ -16,10 +16,34 @@ import pytest
 from mtg_agent.wrapper import activity
 
 
+class AgentLog:
+    """`caplog` narrowed to the `agent` logger these tests are about.
+
+    Plain `caplog.text` holds every record that reached the root logger
+    during the test, from any thread in the process: an `httpx` request line
+    from a background thread another test on the same xdist worker left
+    running failed `assert agent_log.text.strip() == ""` here (seed 101)
+    although the watcher had logged nothing."""
+
+    def __init__(self, caplog: pytest.LogCaptureFixture) -> None:
+        self._caplog = caplog
+
+    @property
+    def records(self) -> list[logging.LogRecord]:
+        return [r for r in self._caplog.records if r.name == "agent" or r.name.startswith("agent.")]
+
+    @property
+    def text(self) -> str:
+        return "".join(self._caplog.handler.format(r) + "\n" for r in self.records)
+
+    def clear(self) -> None:
+        self._caplog.clear()
+
+
 @pytest.fixture
 def agent_log(caplog):
     caplog.set_level(logging.INFO, logger="agent")
-    return caplog
+    return AgentLog(caplog)
 
 
 def assistant(*blocks) -> dict:
