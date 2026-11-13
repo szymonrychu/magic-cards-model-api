@@ -67,9 +67,14 @@ def test_a_401_fails_the_turn_instead_of_hanging_it(ready):
 
     proc.feed(b"\x1b[2K Please run /login \xc2\xb7 API Error: 401 API key is invalid.\r\n")
 
-    assert wait_for(lambda: manager.current_turn_id is None), (
+    # Wait on the callback, not on `current_turn_id`: the manager clears the
+    # turn under its lock and only then records and delivers the failure
+    # outside it, so a loaded runner can see the turn cleared before `done`
+    # is appended.
+    assert wait_for(lambda: bool(done)), (
         "the turn was never failed - this is the live freeze: busy forever"
     )
+    assert manager.current_turn_id is None
     assert manager.state is State.READY
     assert len(done) == 1
     record = done[0]

@@ -3578,3 +3578,10 @@ Retroactive audit (2026-09-26) of every change to pre-existing test content in a
   review landed before the handover answered. (5) `test_exit_lifecycle.py` used `pkill`, missing in
   the agent pods (procps), so it failed on every run there; it now finds the stub child through
   `/proc` and sends SIGTERM itself.
+- 2026-11-13 - `test_a_401_fails_the_turn_instead_of_hanging_it` failed on main CI (seed 2554032565,
+  `assert 0 == 1`) as a timing race, not order pollution: the seed passes on `tests/wrapper` alone,
+  and a 50ms sleep in `Store.fail` fails it every run. `fail_on_fatal_output` clears `_current`
+  under the lock, then `_finish_failed` logs, records and delivers outside it (by design, the
+  callback never runs under the lock), so a test that waits on `current_turn_id is None` can read
+  `done` before the callback appends. The test now waits on `done`, then checks the cleared turn;
+  every sibling in `tests/wrapper` already waited on the callback list. No production change.
