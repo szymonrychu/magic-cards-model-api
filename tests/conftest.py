@@ -8,6 +8,7 @@ import os
 from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 os.environ["MCM_CACHE_DIR"] = str(Path(__file__).parent / "fixtures" / "scryfall")
 
@@ -155,6 +156,17 @@ def pytest_configure(config: pytest.Config) -> None:
         return
     _provision_xdist_worker_schema(base_url, schema)
     os.environ["MCM_TEST_DATABASE_URL"] = _schema_scoped_database_url(base_url, schema)
+
+
+def pytest_terminal_summary(terminalreporter: Any, config: pytest.Config) -> None:
+    """Print the shuffle seed where `-q` (this repo's `addopts`) still shows it.
+
+    pytest-randomly announces `Using --randomly-seed=N` in the report header,
+    which `-q` suppresses, so a failing shuffled CI run would not say which seed
+    to replay. Not printed under `-p no:randomly`, where there is no seed."""
+    seed = getattr(config.option, "randomly_seed", None)
+    if seed is not None:
+        terminalreporter.write_line(f"Using --randomly-seed={seed}")
 
 
 #: The methods the harness credential is added to. `game_access.py`'s
