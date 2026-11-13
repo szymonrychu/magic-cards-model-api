@@ -89,6 +89,11 @@ class ClaudeMatchManager:
         self._lock = threading.Lock()
         self._matches: dict[str, _ClaudeMatch] = {}
 
+    def live_ids(self) -> list[str]:
+        """Ids of the match runs currently held (the test suite's leak guard reads this)."""
+        with self._lock:
+            return list(self._matches)
+
     def start(
         self,
         deck_a: str,

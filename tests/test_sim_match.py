@@ -182,6 +182,16 @@ def _batches(env=None, handles=None, **kw):
     return BatchManager(limits, handle_factory=factory, **kw), made
 
 
+def test_live_ids_lists_the_held_batches():
+    batches, made = _batches()
+    assert batches.live_ids() == []
+
+    batch_id = batches.start(RED, GREEN, 2, 1)
+
+    assert batches.live_ids() == [batch_id]
+    batches.shutdown()
+
+
 def test_second_batch_is_refused_while_one_runs():
     from magic_cards_model_api.sim.manager import SimRefused
 

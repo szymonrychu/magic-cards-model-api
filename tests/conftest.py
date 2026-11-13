@@ -3,6 +3,7 @@ in tests/fixtures/scryfall - the network is never touched."""
 
 from __future__ import annotations
 
+import contextlib
 import os
 from collections.abc import Iterator
 from pathlib import Path
@@ -480,6 +481,84 @@ def life_of(state_dict: dict, username: str) -> int:
     return next(player for player in state_dict["players"] if player["username"] == username)[
         "life"
     ]
+
+
+#: The process-wide singleton, captured at import. Not the module-level `store`
+#: name: `postgres_store_testkit.postgres_store` rebinds that name in every module
+#: (this one included) to a throwaway `PostgresRepository` for the length of a
+#: test, and that swap is still in place when the guard tears down, so the guard
+#: would diff the singleton before against a different repository after.
+_SINGLETON_STORE = store
+
+
+def _shared_state_snapshot() -> dict[str, set[str]]:
+    """What the process-wide singletons hold right now, by kind.
+
+    `store` (games, user preferences) and the three module-level sim managers
+    are bound once at import and shared by every test in the process, so
+    anything a test leaves in them is seen by whichever test runs next on the
+    same xdist worker.
+    """
+    from magic_cards_model_api.sim import server as sim_server
+
+    return {
+        "game": set(_SINGLETON_STORE.ids()),
+        "user preference": set(_SINGLETON_STORE.user_preference_subs()),
+        "sim sandbox": set(sim_server.manager.live_ids()),
+        "sim batch": set(sim_server.batches.live_ids()),
+        "sim claude match": set(sim_server.claude.live_ids()),
+    }
+
+
+@contextlib.contextmanager
+def leak_guard(nodeid: str) -> Iterator[None]:
+    """Fail `nodeid` if the block leaves anything new in the shared singletons.
+
+    Diffs against a snapshot taken on entry rather than asserting emptiness, so
+    a session-scoped fixture that legitimately owns a game stays legal. Whatever
+    leaked is cleaned up first (games deleted, preferences forgotten, sandboxes
+    ended), so one leak fails its own culprit and does not cascade into the
+    next test as a confusing victim.
+    """
+    from magic_cards_model_api.sim import server as sim_server
+    from magic_cards_model_api.sim.manager import SimRefused
+
+    before = _shared_state_snapshot()
+    yield
+    after = _shared_state_snapshot()
+    leaked = {kind: after[kind] - before[kind] for kind in after if after[kind] - before[kind]}
+    if not leaked:
+        return
+    for game_id in leaked.get("game", ()):
+        _SINGLETON_STORE.delete(game_id)
+    for sub in leaked.get("user preference", ()):
+        _SINGLETON_STORE.delete_user_preferences(sub)
+    for sandbox_id in leaked.get("sim sandbox", ()):
+        with contextlib.suppress(SimRefused):
+            sim_server.manager.end(sandbox_id)
+    detail = ", ".join(f"{len(ids)} {kind}(s)" for kind, ids in sorted(leaked.items()))
+    pytest.fail(f"{nodeid} left {detail} in the shared store", pytrace=False)
+
+
+@pytest.fixture(autouse=True)
+def _no_leaked_games(request):
+    """Set up first and torn down last (so after `client`'s own cleanup), which
+    makes it fail the test that leaked rather than a later victim of the leak."""
+    with leak_guard(request.node.nodeid):
+        yield
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _store_empty_at_session_end():
+    """The per-test diff cannot see a game a background thread creates after its
+    test returned (`ClaudeMatchManager._start_in_background`). By the end of the
+    session nothing may remain."""
+    yield
+    left = store.ids()
+    for game_id in left:
+        store.delete(game_id)
+    if left:
+        pytest.fail(f"{len(left)} game(s) left in the shared store at session end", pytrace=False)
 
 
 @pytest.fixture()

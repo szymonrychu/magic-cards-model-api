@@ -77,6 +77,11 @@ class SandboxManager:
         self._closed = False
         self._starting = 0  # slots reserved by a `new` still in flight
 
+    def live_ids(self) -> list[str]:
+        """Ids of the sandboxes currently held (the test suite's leak guard reads this)."""
+        with self._lock:
+            return list(self._sandboxes)
+
     def new(self, spec: dict[str, Any], *, mode: str = "board") -> dict[str, Any]:
         """Open a sandbox. `mode="play"`: `spec` is deck_me, deck_opponent, seed, me_first."""
         if mode != "play":
@@ -332,6 +337,11 @@ class BatchManager:
         self._lock = threading.Lock()
         self._batches: dict[str, _Batch] = {}
         self._closed = False
+
+    def live_ids(self) -> list[str]:
+        """Ids of the batches currently held (the test suite's leak guard reads this)."""
+        with self._lock:
+            return list(self._batches)
 
     def start(self, deck_a: str, deck_b: str, games: int, seed: int | None) -> str:
         lim = self._limits
