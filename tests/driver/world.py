@@ -136,6 +136,12 @@ def build_world(tmp_path, clock=None, sleep=None, channel=Channel.OFF) -> Simple
         #: default. Set to simulate a slow review generation, to prove the
         #: driver never waits on it before answering `/turn-done`.
         "wrapper_review_delay": 0,
+        #: A `threading.Event` `/v1/review`'s fake waits on (10s at most)
+        #: before answering, or None. Unlike `wrapper_review_delay` it holds
+        #: the review for exactly as long as the test wants, so "the driver
+        #: answered before the review finished" is an ordering fact the test
+        #: can assert, not a wall-clock race against the delay.
+        "wrapper_review_gate": None,
         #: The wrapper session's own state word on `GET /v1/session`
         #: (`wrapper.session.State`): "busy" while claude holds a turn,
         #: whoever pushed it.
@@ -389,6 +395,8 @@ def build_world(tmp_path, clock=None, sleep=None, channel=Channel.OFF) -> Simple
         events.append("review")
         if state["wrapper_review_delay"]:
             time.sleep(state["wrapper_review_delay"])
+        if state["wrapper_review_gate"] is not None:
+            state["wrapper_review_gate"].wait(timeout=10)
         if state["wrapper_review"] == "down":
             raise httpx.ConnectError("connection refused")
         if state["wrapper_review"] == "error":
