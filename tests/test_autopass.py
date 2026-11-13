@@ -176,37 +176,50 @@ class Opponent:
     def _loop(self) -> None:
         client = TestClient(app)
         while not self.stop.is_set():
-            board = client.get(f"/api/games/{self.game_id}").json()
-            if board.get("winner") or board.get("drawn"):
+            if self.answer_once(client) is None:
                 return
-            pending = board.get("pending_decision")
-            if pending is not None and pending.get("player") == self.player:
-                if pending.get("kind") == "declare_attackers":
-                    client.post(
-                        f"/api/games/{self.game_id}/actions/attack",
-                        params={"uid": self.uid},
-                        json={"attackers": []},
-                    )
-                elif pending.get("kind") == "declare_blockers":
-                    client.post(
-                        f"/api/games/{self.game_id}/actions/declare-blockers",
-                        params={"uid": self.uid},
-                        json={"player": self.player, "blocks": []},
-                    )
-                else:
-                    # Some other decision this file does not stage for the
-                    # opponent (nothing here needed one before this task) -
-                    # waiting rather than guessing an answer.
-                    time.sleep(FAST_POLL)
-                continue
-            if board.get("priority_holder") == self.player:
+
+    def answer_once(self, client: TestClient) -> bool | None:
+        """Look at the board once and answer what is pending for this seat.
+
+        Returns True when it acted, False when there was nothing for it to do
+        (it has already slept one poll in that case), and None when the game is
+        over. `_loop` repeats this on a thread; a test that needs a
+        deterministic interleaving calls it directly, between its own calls.
+        """
+        board = client.get(f"/api/games/{self.game_id}").json()
+        if board.get("winner") or board.get("drawn"):
+            return None
+        pending = board.get("pending_decision")
+        if pending is not None and pending.get("player") == self.player:
+            if pending.get("kind") == "declare_attackers":
                 client.post(
-                    f"/api/games/{self.game_id}/actions/pass-priority",
-                    json={"player": self.player},
+                    f"/api/games/{self.game_id}/actions/attack",
+                    params={"uid": self.uid},
+                    json={"attackers": []},
                 )
-                self.passes += 1
-            else:
-                time.sleep(FAST_POLL)
+                return True
+            if pending.get("kind") == "declare_blockers":
+                client.post(
+                    f"/api/games/{self.game_id}/actions/declare-blockers",
+                    params={"uid": self.uid},
+                    json={"player": self.player, "blocks": []},
+                )
+                return True
+            # Some other decision this file does not stage for the
+            # opponent (nothing here needed one before this task) -
+            # waiting rather than guessing an answer.
+            time.sleep(FAST_POLL)
+            return False
+        if board.get("priority_holder") == self.player:
+            client.post(
+                f"/api/games/{self.game_id}/actions/pass-priority",
+                json={"player": self.player},
+            )
+            self.passes += 1
+            return True
+        time.sleep(FAST_POLL)
+        return False
 
     def __enter__(self) -> Opponent:
         self.thread.start()
@@ -1095,6 +1108,9 @@ def test_a_non_retryable_hand_back_is_never_retried_by_the_bounded_wait(monkeypa
     )
 
 
+EXPECTED_CALLS = 4  # upkeep, draw, main1, stop (pinned from the observed run)
+
+
 def test_a_multi_call_run_still_stops_at_its_own_declare_attackers_step(client, game, monkeypatch):
     """What the `resume` token is for, and why `pass_until` cannot simply
     re-stamp itself on every call.
@@ -1118,17 +1134,34 @@ def test_a_multi_call_run_still_stops_at_its_own_declare_attackers_step(client, 
     a_bear_that_can_attack(client, game, "alice")
     set_step(client, game, "upkeep")
 
-    with Opponent(game, "bob"):
-        result = run_to_stop(
+    # Lockstep, not a free-running thread: bob answers exactly what is pending,
+    # once and synchronously, only after alice's call has handed the board back.
+    # With a thread, whether alice ever saw "bob holds priority" (a hand-back,
+    # so a second call) depended on scheduler luck and the run could finish in
+    # one call. Here the interleaving is fixed, so the call count is exact.
+    bob = Opponent(game, "bob")
+    bob_client = TestClient(app)
+    resume = None
+    calls = 0
+    while True:
+        result = pass_until(
             alice,
+            resume=resume,
             until_step="postcombat_main",
             whose_turn="mine",
             # T2: both opt-in now - "every stop on" above means passing both.
             stop_when_attacked=True,
             stop_when_you_can_attack=True,
         )
+        calls += 1
+        assert calls < 20, f"the run never finished: {result['stopped_because']}"
+        if result["finished"]:
+            break
+        resume = result["resume"]
+        bob.answer_once(bob_client)
 
-    assert result["calls"] > 1, (
+    assert calls == EXPECTED_CALLS, (
+        f"expected exactly {EXPECTED_CALLS} calls in lockstep, got {calls}; "
         "this test is only meaningful if the run really did span several calls"
     )
     assert "it is your declare-attackers step" in result["stopped_because"], result[
