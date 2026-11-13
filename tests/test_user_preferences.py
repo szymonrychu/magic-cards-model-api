@@ -25,6 +25,7 @@ from magic_cards_model_api.db import make_engine
 from magic_cards_model_api.repository import GameRepository, InMemoryRepository
 from magic_cards_model_api.repository_postgres import PostgresRepository
 from magic_cards_model_api.schemas import USER_PREFERENCES_MAX_BYTES
+from magic_cards_model_api.store import store
 
 _TEST_DATABASE_URL_ENV = "MCM_TEST_DATABASE_URL"
 _pg_engine = None
@@ -94,6 +95,28 @@ def test_different_subs_are_independent(repo: GameRepository) -> None:
     assert repo.get_user_preferences("bob")["preferences"] == {"b": 2}  # type: ignore[index]
 
 
+def test_user_preference_subs_lists_every_sub_that_wrote(repo: GameRepository) -> None:
+    assert repo.user_preference_subs() == []
+
+    repo.set_user_preferences("alice", {"a": 1})
+    repo.set_user_preferences("bob", {"b": 2})
+    repo.set_user_preferences("alice", {"a": 3})
+
+    assert sorted(repo.user_preference_subs()) == ["alice", "bob"]
+
+
+def test_delete_user_preferences_forgets_one_sub_only(repo: GameRepository) -> None:
+    repo.set_user_preferences("alice", {"a": 1})
+    repo.set_user_preferences("bob", {"b": 2})
+
+    repo.delete_user_preferences("alice")
+    repo.delete_user_preferences("never-wrote")
+
+    assert repo.get_user_preferences("alice") is None
+    assert repo.get_user_preferences("bob") is not None
+    assert repo.user_preference_subs() == ["bob"]
+
+
 def test_the_postgres_factory_is_parameterised_into_this_suite() -> None:
     assert _postgres_repository_factory in _REPOSITORY_FACTORIES
 
@@ -101,6 +124,21 @@ def test_the_postgres_factory_is_parameterised_into_this_suite() -> None:
 # ---------------------------------------------------------------------------
 # GET/PUT /api/me/preferences
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _forget_preferences():
+    """The route tests PUT through the process-wide `store` singleton, and
+    nothing else clears a `sub`'s preferences, so one test's PUT leaked into the
+    next test's "first-time user" GET whenever they ran in that order (shuffled
+    order, or xdist handing both to one worker). Clear before and after, so each
+    test starts from an empty table and leaves none behind for the store leak
+    guard in conftest.py to flag."""
+    for sub in store.user_preference_subs():
+        store.delete_user_preferences(sub)
+    yield
+    for sub in store.user_preference_subs():
+        store.delete_user_preferences(sub)
 
 
 @pytest.fixture(scope="session")

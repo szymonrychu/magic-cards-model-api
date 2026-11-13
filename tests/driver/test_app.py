@@ -1449,17 +1449,21 @@ def test_the_review_stays_best_effort_and_never_blocking_under_the_checkout_lock
     """
     client = world.client
     state = world.state
-    state["wrapper_review_delay"] = 0.5
+    gate = threading.Event()
+    state["wrapper_review_gate"] = gate
     dispatch(client)
     state["winner"] = "bob"
     client.post("/turn-done", json={"turnId": "turn-1", "state": "complete", "finalText": "gg"})
-    started = time.monotonic()
     body = client.post(
         "/turn-done", json={"turnId": "turn-2", "state": "complete", "finalText": "wrote"}
     ).json()
-    # The handover was answered without waiting on the review at all.
-    assert time.monotonic() - started < 0.4
+    # The handover was answered while the review was still held at the gate,
+    # so it cannot have waited on it. (This was a 0.5s review delay and a
+    # 0.4s wall-clock bound on the response: a loaded runner took 0.49s to
+    # answer without waiting on anything, and failed a property that held.)
     assert body["handover"]["outcome"] == "bob won"
+    assert world.ai_review_posts == [], "the review finished before the handover answered"
+    gate.set()
 
     complete_handover(client, world.submitted)
     wait_for(lambda: client.get("/status").json()["gameId"] is None)

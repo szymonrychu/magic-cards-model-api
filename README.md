@@ -908,6 +908,62 @@ green on the rebased branch, against the engine revision it will ship with
 (`../magic-cards-model` at its own green `main`, whose `test:full` must be
 green too).
 
+### Shuffled test order
+
+`pytest-randomly` is a dev dependency, so every `mise run test` and `test:pg`
+run (local and CI) executes in a random order and prints `Using
+--randomly-seed=N` in its header. To replay a failure, pass the seed back:
+
+```sh
+uv run pytest -p randomly --randomly-seed=<seed from the log> tests/path_to_test.py
+uv run pytest -p no:randomly tests/path_to_test.py   # file order, no shuffling
+```
+
+`-p no:randomly` opts out; `--randomly-dont-reorganize` keeps the order but
+still reseeds `random`. Shuffling is what exposes a test that depends on
+another having run first, so a failure that only shows up under one seed is a
+real isolation bug to fix, not a flake to rerun.
+
+### Store leak guard
+
+`tests/conftest.py` has an autouse fixture (`_no_leaked_games`) that snapshots
+the process-wide singletons before each test - games and user preferences in
+`store`, and the sandboxes, batches and Claude matches held by the module-level
+sim managers - and fails the test that left something new behind, by node id,
+after cleaning it up. A session-end fixture also fails if any game is still in
+the store (a background thread can create one after its test returned). It runs
+on both the in-memory and the postgres pass and has no opt-out: delete what your
+test creates, in a `try`/`finally` or a fixture.
+
+## Deploy, then smoke-check
+
+The release flow is: CI publishes the `X.Y.Z` images, then
+
+```sh
+mise run k8s:deploy 1.2.3   # phased apply: prerequisites, database, migration Job, app
+mise run k8s:smoke 1.2.3    # by hand, once the rollout is done
+```
+
+`k8s:smoke` is a separate task on purpose and is not chained into `k8s:deploy`.
+It fails (non-zero) if any check fails, prints one `PASS`/`FAIL` line each, and
+never prints a secret value. It checks that:
+
+- the `game` container of `deploy/mtg-stack` runs image tag `1.2.3` and the rollout completed;
+- Secret `mtg-agent` has no `CLAUDE_CODE_EFFORT_LEVEL` key (key names only are read);
+- inside the pod (`kubectl exec`, `scripts/smoke_deploy.py` on the image's own Python):
+  `/api/health` answers `ok`; the sim MCP tool list (`/sim/mcp`, bearer `MTG_SIM_TOKEN`
+  from the pod's environment) has no `sim_match`, `sim_match_status` or `sim_play_new`
+  and does have `sim_review_mtgo_log`, `sim_card_lookup`, `sim_snapshot`, `sim_restore`;
+  the lobby default is `claude-opus-5-5` at `low`; and a seat Job rendered by
+  `k8s_seats.build_job` does not set `CLAUDE_CODE_EFFORT_LEVEL`.
+
+Access needed in namespace `mtg-engine`: `get deployments`, `get secrets` and
+`create pods/exec` (the task checks `kubectl auth can-i create pods/exec` first and
+says so if it is missing). The preset requirement (the `mtg-sim` MCP server in the
+agent's preset) is under "Preset entry (operator)" above.
+
+Deploy and smoke owner: the mtg-sim-retro session (T-201 decision 559).
+
 ## How it works
 
 - Games live in memory: a restart wipes every session.

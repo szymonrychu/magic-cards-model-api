@@ -74,6 +74,17 @@ def test_second_sandbox_is_refused_with_ttl_and_retry_advice(clock, made):
         m.new(SPEC)
 
 
+def test_live_ids_lists_the_held_sandboxes(clock, made):
+    m = manager(clock, made)
+    assert m.live_ids() == []
+
+    sid = m.new(SPEC)["sandbox"]["id"]
+    assert m.live_ids() == [sid]
+
+    m.end(sid)
+    assert m.live_ids() == []
+
+
 def test_new_returns_answer_and_sandbox_info(clock, made):
     out = manager(clock, made).new(SPEC, mode="x")
     assert out["op"] == "new"

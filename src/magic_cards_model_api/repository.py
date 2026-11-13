@@ -910,6 +910,16 @@ class GameRepository(Protocol):
         with."""
         ...
 
+    def user_preference_subs(self) -> list[str]:
+        """Every `sub` that currently has stored preferences. Read by the test
+        suite's leak guard (`tests/conftest.py`); nothing at runtime needs it."""
+        ...
+
+    def delete_user_preferences(self, sub: str) -> None:
+        """Forget `sub`'s stored preferences; a no-op for a `sub` with none.
+        The test suite uses it to clean up after itself; no route calls it."""
+        ...
+
 
 class InMemoryRepository:
     """The in-memory `GameRepository`: game id -> engine `Game`. Nothing
@@ -1273,6 +1283,14 @@ class InMemoryRepository:
                 "updated_at": updated_at,
             }
         return updated_at
+
+    def user_preference_subs(self) -> list[str]:
+        with self._user_preferences_lock:
+            return list(self._user_preferences)
+
+    def delete_user_preferences(self, sub: str) -> None:
+        with self._user_preferences_lock:
+            self._user_preferences.pop(sub, None)
 
     def admin_key(self, game_id: str) -> str | None:
         """This game's admin key, to hand to whoever just created it."""

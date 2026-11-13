@@ -40,6 +40,8 @@ import asyncio
 import json
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from types import SimpleNamespace
 from typing import Any
 
@@ -176,37 +178,50 @@ class Opponent:
     def _loop(self) -> None:
         client = TestClient(app)
         while not self.stop.is_set():
-            board = client.get(f"/api/games/{self.game_id}").json()
-            if board.get("winner") or board.get("drawn"):
+            if self.answer_once(client) is None:
                 return
-            pending = board.get("pending_decision")
-            if pending is not None and pending.get("player") == self.player:
-                if pending.get("kind") == "declare_attackers":
-                    client.post(
-                        f"/api/games/{self.game_id}/actions/attack",
-                        params={"uid": self.uid},
-                        json={"attackers": []},
-                    )
-                elif pending.get("kind") == "declare_blockers":
-                    client.post(
-                        f"/api/games/{self.game_id}/actions/declare-blockers",
-                        params={"uid": self.uid},
-                        json={"player": self.player, "blocks": []},
-                    )
-                else:
-                    # Some other decision this file does not stage for the
-                    # opponent (nothing here needed one before this task) -
-                    # waiting rather than guessing an answer.
-                    time.sleep(FAST_POLL)
-                continue
-            if board.get("priority_holder") == self.player:
+
+    def answer_once(self, client: TestClient) -> bool | None:
+        """Look at the board once and answer what is pending for this seat.
+
+        Returns True when it acted, False when there was nothing for it to do
+        (it has already slept one poll in that case), and None when the game is
+        over. `_loop` repeats this on a thread; a test that needs a
+        deterministic interleaving calls it directly, between its own calls.
+        """
+        board = client.get(f"/api/games/{self.game_id}").json()
+        if board.get("winner") or board.get("drawn"):
+            return None
+        pending = board.get("pending_decision")
+        if pending is not None and pending.get("player") == self.player:
+            if pending.get("kind") == "declare_attackers":
                 client.post(
-                    f"/api/games/{self.game_id}/actions/pass-priority",
-                    json={"player": self.player},
+                    f"/api/games/{self.game_id}/actions/attack",
+                    params={"uid": self.uid},
+                    json={"attackers": []},
                 )
-                self.passes += 1
-            else:
-                time.sleep(FAST_POLL)
+                return True
+            if pending.get("kind") == "declare_blockers":
+                client.post(
+                    f"/api/games/{self.game_id}/actions/declare-blockers",
+                    params={"uid": self.uid},
+                    json={"player": self.player, "blocks": []},
+                )
+                return True
+            # Some other decision this file does not stage for the
+            # opponent (nothing here needed one before this task) -
+            # waiting rather than guessing an answer.
+            time.sleep(FAST_POLL)
+            return False
+        if board.get("priority_holder") == self.player:
+            client.post(
+                f"/api/games/{self.game_id}/actions/pass-priority",
+                json={"player": self.player},
+            )
+            self.passes += 1
+            return True
+        time.sleep(FAST_POLL)
+        return False
 
     def __enter__(self) -> Opponent:
         self.thread.start()
@@ -433,38 +448,10 @@ def test_a_run_told_not_to_stop_on_the_stack_runs_through_it(client, game, monke
     to its destination."""
     seats, uids = wired(monkeypatch, game)
     alice = seats.seat_for(uids["alice"])
-    add_card(client, game, "Mountain", "bob", "battlefield")
-    add_card(client, game, "Lightning Bolt", "bob", "hand")
-    board = state(client, game)
-    mountain = find(board["battlefield"], "Mountain")["id"]
-    bolt = board["hands"]["bob"][0]["id"]
+    cast = bob_bolts_alice(client, game)
     set_step(client, game, "precombat_main")
 
-    def bob_bolts_then_passes() -> None:
-        bob_client = TestClient(app)
-        bolted = False
-        for _ in range(4000):
-            board = bob_client.get(f"/api/games/{game}").json()
-            if board.get("priority_holder") != "bob":
-                time.sleep(FAST_POLL)
-                continue
-            if not bolted:
-                bob_client.post(
-                    f"/api/games/{game}/actions/cast",
-                    json={
-                        "player": "bob",
-                        "card_id": bolt,
-                        "targets": ["alice"],
-                        "mana_sources": [mountain],
-                    },
-                )
-                bolted = True
-                continue
-            bob_client.post(f"/api/games/{game}/actions/pass-priority", json={"player": "bob"})
-
-    thread = threading.Thread(target=bob_bolts_then_passes, daemon=True)
-    thread.start()
-    try:
+    with bob_acts_then_passes(game, cast) as done:
         result = run_to_stop(
             alice,
             until_step="end_step",
@@ -472,9 +459,8 @@ def test_a_run_told_not_to_stop_on_the_stack_runs_through_it(client, game, monke
             stop_on_stack=False,
             stop_when_you_can_attack=False,  # alice's own combat is on the way
         )
-    finally:
-        thread.join(timeout=1)
 
+    assert done.is_set(), "bob never cast, so nothing was tested"
     assert result["stopped_because"] == "reached your end step", result["stopped_because"]
     assert result["state"]["stack"] == [], "the bolt should have resolved on the way past"
 
@@ -564,12 +550,27 @@ def test_a_run_does_not_echo_its_own_declare_blockers_decision_when_the_commit_i
     seats, uids = wired(monkeypatch, game)
     bob = seats.seat_for(uids["bob"])
     stock_libraries(client, game)
+    # bob needs a creature that could block, or "declare nobody" is his only
+    # legal answer and `auto_answer_forced` makes it without ever reaching
+    # `perform_declare` - the path this test slows. It did exactly that, with
+    # the slowdown landing on his priority passes instead (see `_slow_watch`).
+    add_card(client, game, "Llanowar Elves", "bob", "battlefield")
     stage_an_attack_on_bob(client, game)
 
     _orig_watch = seatkit._call_watching_for_self_decision
+    slowed: list[str] = []
 
     def _slow_watch(seat, perform, poll_seconds=seatkit.POLL_SECONDS, **kwargs):
+        # Only the "declare nobody" commit is slowed. This used to slow every
+        # call routed through here, each priority pass too, so a lap of four
+        # passes slept 2.4s by design before any real work and a loaded
+        # runner pushed it past `MAX_CALL_SECONDS` (6.5s, seed 101) - the
+        # bound failed on sleeps the test itself added, not on the run.
+        if getattr(perform, "__name__", "") != "perform_declare":
+            return _orig_watch(seat, perform, poll_seconds=poll_seconds, **kwargs)
+
         def _slowed():
+            slowed.append(seat.player)
             time.sleep(seatkit.POLL_SECONDS * 3)
             return perform()
 
@@ -585,6 +586,7 @@ def test_a_run_does_not_echo_its_own_declare_blockers_decision_when_the_commit_i
             stop_when_attacked=False,
         )
 
+    assert slowed == ["bob"], "bob's own declare-blockers commit was never slowed"
     assert "raised by this very call" not in result["stopped_because"], result["stopped_because"]
     assert result["stopped_because"] == "reached your upkeep", result["stopped_because"]
     assert result["state"]["step"] == "upkeep"
@@ -1095,6 +1097,9 @@ def test_a_non_retryable_hand_back_is_never_retried_by_the_bounded_wait(monkeypa
     )
 
 
+EXPECTED_CALLS = 4  # upkeep, draw, main1, stop (pinned from the observed run)
+
+
 def test_a_multi_call_run_still_stops_at_its_own_declare_attackers_step(client, game, monkeypatch):
     """What the `resume` token is for, and why `pass_until` cannot simply
     re-stamp itself on every call.
@@ -1118,17 +1123,34 @@ def test_a_multi_call_run_still_stops_at_its_own_declare_attackers_step(client, 
     a_bear_that_can_attack(client, game, "alice")
     set_step(client, game, "upkeep")
 
-    with Opponent(game, "bob"):
-        result = run_to_stop(
+    # Lockstep, not a free-running thread: bob answers exactly what is pending,
+    # once and synchronously, only after alice's call has handed the board back.
+    # With a thread, whether alice ever saw "bob holds priority" (a hand-back,
+    # so a second call) depended on scheduler luck and the run could finish in
+    # one call. Here the interleaving is fixed, so the call count is exact.
+    bob = Opponent(game, "bob")
+    bob_client = TestClient(app)
+    resume = None
+    calls = 0
+    while True:
+        result = pass_until(
             alice,
+            resume=resume,
             until_step="postcombat_main",
             whose_turn="mine",
             # T2: both opt-in now - "every stop on" above means passing both.
             stop_when_attacked=True,
             stop_when_you_can_attack=True,
         )
+        calls += 1
+        assert calls < 20, f"the run never finished: {result['stopped_because']}"
+        if result["finished"]:
+            break
+        resume = result["resume"]
+        bob.answer_once(bob_client)
 
-    assert result["calls"] > 1, (
+    assert calls == EXPECTED_CALLS, (
+        f"expected exactly {EXPECTED_CALLS} calls in lockstep, got {calls}; "
         "this test is only meaningful if the run really did span several calls"
     )
     assert "it is your declare-attackers step" in result["stopped_because"], result[
@@ -1334,21 +1356,46 @@ def test_a_hand_back_that_actually_waited_says_how_long_and_how_many(client, gam
     call is not waiting for it" - that became false the moment this loop
     slept and tried again - and say instead how long this call waited and how
     many priorities it passed in total, summed across every internal retry
-    rather than merely the last one's own count."""
+    rather than merely the last one's own count.
+
+    The bounded wait is run out on a clock this test controls, not on the
+    wall clock: with a real 0.3s `max_seconds`, a first `_pass_until_once`
+    that took longer than that on a loaded runner left no time for even one
+    retry, and the call then (correctly) kept the "not waiting" note - the
+    test failed for a run that never waited. Here the deadline is the full
+    `MAX_WAIT_SECONDS`, and seatkit's own clock jumps past it right after the
+    second internal call, so exactly one genuine retry happens every time."""
     monkeypatch.setattr(seatkit, "WAIT_POLL_SECONDS", 0.02)
     seats, uids = wired(monkeypatch, game)
     alice = seats.seat_for(uids["alice"])
     stock_libraries(client, game)
     set_step(client, game, "upkeep")
 
+    offset = [0.0]
+    seatkit_clock = SimpleNamespace(**vars(time))
+    seatkit_clock.monotonic = lambda: time.monotonic() + offset[0]
+    monkeypatch.setattr(seatkit, "time", seatkit_clock)
+    real_once = seatkit._pass_until_once
+    answers: list[dict[str, Any]] = []
+
+    def once_then_out_of_time(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        answer = real_once(*args, **kwargs)
+        answers.append(answer)
+        if len(answers) == 2:
+            offset[0] += seatkit.MAX_WAIT_SECONDS + 1.0
+        return answer
+
+    monkeypatch.setattr(seatkit, "_pass_until_once", once_then_out_of_time)
+
     result = pass_until(
         alice,
         until_step="postcombat_main",
         whose_turn="mine",
         stop_when_you_can_attack=False,
-        max_seconds=0.3,
+        max_seconds=seatkit.MAX_WAIT_SECONDS,
     )
 
+    assert len(answers) == 2, "the first hand-back is retried exactly once"
     assert result["finished"] is False
     assert "this call is not waiting for it" not in result["stopped_because"], (
         "false the moment this loop actually waited and retried"
@@ -1859,16 +1906,31 @@ def test_a_run_never_passes_at_a_game_frozen_on_another_seats_decision(client, m
 # is open to it. What it passed over is reported as `auto_passed`.
 
 
-def bob_acts_then_passes(game: str, act: Any) -> tuple[threading.Thread, threading.Event]:
+@contextmanager
+def bob_acts_then_passes(game: str, act: Any) -> Iterator[threading.Event]:
     """bob takes `act(bob_client)` once, the first time he holds priority,
     then passes every priority after it - the opponent the L1 runs need, who
-    puts one object on the stack and then lets the game move on."""
+    puts one object on the stack and then lets the game move on. Yields the
+    event `act` having run sets.
+
+    The thread is stopped and joined on the way out, and leaving it running
+    fails the test. It used to be a fire-and-forget loop of 4000 polls that
+    the test joined for 1s and abandoned: once the run under test had
+    stopped, bob kept polling at `FAST_POLL` for the rest of those polls,
+    then on into 404s once the `game` fixture deleted the game - minutes of
+    background load and `httpx` log lines landing in whatever test the
+    xdist worker ran next (caplog assertions in `tests/wrapper/
+    test_activity.py`, the `MAX_CALL_SECONDS` bound here)."""
     done = threading.Event()
+    stop = threading.Event()
 
     def loop() -> None:
         bob_client = TestClient(app)
-        for _ in range(4000):
-            board = bob_client.get(f"/api/games/{game}").json()
+        while not stop.is_set():
+            response = bob_client.get(f"/api/games/{game}")
+            if response.status_code == 404:
+                return
+            board = response.json()
             if board.get("winner") or board.get("drawn"):
                 return
             if board.get("priority_holder") != "bob":
@@ -1883,7 +1945,12 @@ def bob_acts_then_passes(game: str, act: Any) -> tuple[threading.Thread, threadi
 
     thread = threading.Thread(target=loop, daemon=True)
     thread.start()
-    return thread, done
+    try:
+        yield done
+    finally:
+        stop.set()
+        thread.join(timeout=10)
+        assert not thread.is_alive(), "bob's thread outlived its test"
 
 
 def bob_bolts_alice(client: TestClient, game: str) -> Any:
@@ -1919,13 +1986,10 @@ def test_an_opponents_spell_you_can_only_pass_over_is_auto_passed(client, game, 
     add_card(client, game, "Lightning Bolt", "alice", "hand")
     set_step(client, game, "precombat_main")
 
-    thread, done = bob_acts_then_passes(game, cast)
-    try:
+    with bob_acts_then_passes(game, cast) as done:
         result = run_to_stop(
             alice, until_step="end_step", whose_turn="mine", stop_when_you_can_attack=False
         )
-    finally:
-        thread.join(timeout=1)
 
     assert done.is_set(), "bob never cast, so nothing was tested"
     assert result["stopped_because"] == "reached your end step", result["stopped_because"]
@@ -1960,13 +2024,10 @@ def test_an_opponents_ability_you_can_only_pass_over_is_auto_passed(client, game
             },
         ).json()
 
-    thread, done = bob_acts_then_passes(game, crack)
-    try:
+    with bob_acts_then_passes(game, crack) as done:
         result = run_to_stop(
             alice, until_step="end_step", whose_turn="mine", stop_when_you_can_attack=False
         )
-    finally:
-        thread.join(timeout=1)
 
     assert done.is_set(), "bob never activated, so nothing was tested"
     assert result["stopped_because"] == "reached your end step", result["stopped_because"]
@@ -1986,11 +2047,8 @@ def test_an_activatable_ability_that_spends_mana_still_stops_the_run(client, gam
     add_card(client, game, "Sunbaked Canyon", "alice", "battlefield")
     set_step(client, game, "precombat_main")
 
-    thread, done = bob_acts_then_passes(game, cast)
-    try:
+    with bob_acts_then_passes(game, cast) as done:
         result = run_to_stop(alice, until_step="end_step", whose_turn="mine")
-    finally:
-        thread.join(timeout=1)
 
     assert done.is_set(), "bob never cast, so nothing was tested"
     assert result["stopped_because"] == "something new went on the stack: Lightning Bolt"
@@ -2015,8 +2073,7 @@ def test_an_armed_script_that_applies_still_stops_the_run(client, game, monkeypa
     monkeypatch.setattr(arming, "validate_arm_request", lambda *a, **k: None)
     monkeypatch.setattr(arming, "arm", judged)
 
-    thread, done = bob_acts_then_passes(game, cast)
-    try:
+    with bob_acts_then_passes(game, cast) as done:
         result = run_to_stop(
             alice,
             until_step="end_step",
@@ -2024,8 +2081,6 @@ def test_an_armed_script_that_applies_still_stops_the_run(client, game, monkeypa
             arm=["dsl:respond"],
             arm_reasoning="respond to the bolt",
         )
-    finally:
-        thread.join(timeout=1)
 
     assert done.is_set(), "bob never cast, so nothing was tested"
     assert result["stopped_because"].startswith("an armed play now applies: dsl:respond")

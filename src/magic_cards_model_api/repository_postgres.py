@@ -95,7 +95,7 @@ from uuid import UUID, uuid4
 from magic_cards_model.machines.decisions import Answer, Decision, PendingDecision
 from magic_cards_model.models import Game
 from pydantic import BaseModel
-from sqlalchemy import func, insert, select, text, update
+from sqlalchemy import delete, func, insert, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Engine
 
@@ -1202,3 +1202,11 @@ class PostgresRepository:
         with self._engine.begin() as conn:
             conn.execute(stmt)
         return now.isoformat()
+
+    def user_preference_subs(self) -> list[str]:
+        with self._engine.connect() as conn:
+            return [row[0] for row in conn.execute(select(user_preferences.c.sub)).all()]
+
+    def delete_user_preferences(self, sub: str) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(delete(user_preferences).where(user_preferences.c.sub == sub))

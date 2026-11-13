@@ -153,6 +153,16 @@ def test_start_boots_two_ai_seats_outside_the_lobby(fake_registry):
     _finish(manager, out["match_id"])
 
 
+def test_live_ids_lists_the_held_matches(fake_registry):
+    manager = _manager()
+    assert manager.live_ids() == []
+
+    out = _start(manager, RED, GREEN, seed=1)
+
+    assert manager.live_ids() == [out["match_id"]]
+    _finish(manager, out["match_id"])
+
+
 def test_second_claude_match_refused(fake_registry):
     from magic_cards_model_api.sim.manager import SimRefused
 

@@ -379,6 +379,71 @@ done
 uv run python scripts/render_seat_jobs.py
 """
 
+[tasks."k8s:smoke"]
+usage = 'arg "<version>" env="MTG_VERSION"'
+description = "Post-deploy smoke check, run BY HAND after k8s:deploy: the rolled-out image is X.Y.Z, the sim MCP tool list, the lobby default and the seat Job env are as released (never prints secret values)"
+# Deliberately NOT chained into k8s:deploy (decision Q4=A, T-201): the deploy stays
+# the plain apply it is, and this is a separate, repeatable check an owner runs
+# when the rollout is done. Needs, in namespace mtg-engine: get deployments,
+# get secrets, create pods/exec. It reads Secret key NAMES only (go-template over
+# .data keys), never a value, and scripts/smoke_deploy.py never prints the bearer
+# token it reads from the pod's own environment. Every check runs even after a
+# failure; the exit status is non-zero if any failed.
+run = """
+set -eu
+VERSION="${usage_version:-}"
+case "$VERSION" in
+  ""|*[!0-9.]*) echo "k8s:smoke: pass an X.Y.Z release version (argument or MTG_VERSION), got '${VERSION}'" >&2; exit 1 ;;
+esac
+printf '%s' "$VERSION" | grep -Eq '^[0-9]+[.][0-9]+[.][0-9]+$' || { echo "k8s:smoke: version must be X.Y.Z (digits), got '${VERSION}'" >&2; exit 1; }
+NS=mtg-engine
+FAILED=0
+pass() { echo "PASS $1"; }
+fail() { echo "FAIL $1" >&2; FAILED=1; }
+
+# --- 0. access: exec is the one permission a read-only kubeconfig lacks ------
+if [ "$(kubectl auth can-i create pods/exec -n "$NS" 2>/dev/null || true)" != "yes" ]; then
+  echo "k8s:smoke: this kubeconfig cannot 'create pods/exec' in ${NS}; ask for exec on deploy/mtg-stack" >&2
+  exit 1
+fi
+
+# --- 1. the Deployment runs the released image and the rollout finished ------
+IMAGE="$(kubectl -n "$NS" get deploy/mtg-stack -o jsonpath='{.spec.template.spec.containers[?(@.name=="game")].image}')"
+case "$IMAGE" in
+  *":${VERSION}") pass "deploy/mtg-stack container game image tag is ${VERSION}" ;;
+  *) fail "deploy/mtg-stack container game image is '${IMAGE}', want tag ${VERSION}" ;;
+esac
+if kubectl -n "$NS" rollout status deploy/mtg-stack --timeout=300s; then
+  pass "deploy/mtg-stack rollout complete"
+else
+  fail "deploy/mtg-stack rollout did not complete within 300s"
+fi
+
+# --- 2. Secret mtg-agent: key NAMES only, never values -----------------------
+if KEYS="$(kubectl -n "$NS" get secret mtg-agent -o go-template='{% raw %}{{range $k, $v := .data}}{{$k}}{{"\\n"}}{{end}}{% endraw %}')"; then
+  if printf '%s\\n' "$KEYS" | grep -qx 'CLAUDE_CODE_EFFORT_LEVEL'; then
+    fail "secret mtg-agent carries the key CLAUDE_CODE_EFFORT_LEVEL (it would override each seat's --effort)"
+  else
+    pass "secret mtg-agent has no CLAUDE_CODE_EFFORT_LEVEL key"
+  fi
+else
+  fail "could not read the key names of secret mtg-agent"
+fi
+
+# --- 3. in-pod checks: health, MCP tool list, lobby default, seat Job env ----
+if kubectl -n "$NS" exec -i deploy/mtg-stack -c game -- python - < scripts/smoke_deploy.py; then
+  pass "in-pod checks (scripts/smoke_deploy.py)"
+else
+  fail "in-pod checks (scripts/smoke_deploy.py) reported failures above"
+fi
+
+if [ "$FAILED" -ne 0 ]; then
+  echo "k8s:smoke: FAILED" >&2
+  exit 1
+fi
+echo "k8s:smoke: all checks passed for ${VERSION}"
+"""
+
 [tasks."k8s:deploy"]
 usage = 'arg "<version>" env="MTG_VERSION"'
 description = "Apply the released X.Y.Z images (pushed by CI), then apply in phases: prerequisites, the database, a migration Job (waited on), then the app"

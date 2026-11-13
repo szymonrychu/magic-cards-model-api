@@ -9,6 +9,7 @@ process is gone afterwards - the only assertion that can tell the difference.
 from __future__ import annotations
 
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -26,6 +27,30 @@ def free_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         return sock.getsockname()[1]
+
+
+def children_running(parent: int, script: Path) -> list[int]:
+    """Pids of `parent`'s direct children whose command line names `script`.
+
+    Read from `/proc` rather than with `pkill -P <parent> -f <script>`, which
+    did the same: procps is missing from some test containers (the
+    agent pods), and a `FileNotFoundError` for `pkill` failed this test there
+    on every run, whatever the order."""
+    found = []
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            stat = (entry / "stat").read_text()
+            cmdline = (entry / "cmdline").read_bytes().replace(b"\0", b" ")
+        except OSError:
+            continue  # exited while we looked
+        # Field 4 is the parent pid; the command name before it is in
+        # parentheses and may itself contain spaces.
+        ppid = int(stat.rsplit(")", 1)[1].split()[1])
+        if ppid == parent and str(script).encode() in cmdline:
+            found.append(int(entry.name))
+    return found
 
 
 def wait_until(predicate, timeout: float, what: str):
@@ -117,12 +142,14 @@ def test_a_claude_that_dies_takes_the_container_with_it(wrapper_process):
     assert session["state"] == "ready"
 
     # Kill the stub claude itself, not the wrapper: this is the crash case.
-    # Scoped to a child of THIS test's wrapper process (`-P`) - a bare
-    # `pkill -f <STUB>` matches by command line only, machine-wide, and under
-    # parallel test workers each running their own `stack`-fixture stub
-    # (tests/wrapper/test_integration.py) it killed an unrelated worker's
-    # in-flight stub process too (pty.fork() makes the stub a direct child of
-    # `proc`, so `-P str(proc.pid)` is exact).
-    subprocess.run(["pkill", "-f", "-P", str(proc.pid), str(STUB)], check=False)  # noqa: S603, S607
+    # Scoped to a child of THIS test's wrapper process - a machine-wide match
+    # on the command line alone, under parallel test workers each running
+    # their own `stack`-fixture stub (tests/wrapper/test_integration.py),
+    # killed an unrelated worker's in-flight stub process too (pty.fork()
+    # makes the stub a direct child of `proc`, so its parent pid is exact).
+    stubs = children_running(proc.pid, STUB)
+    assert stubs, "the wrapper has no stub claude child to kill"
+    for pid in stubs:
+        os.kill(pid, signal.SIGTERM)
 
     assert proc.wait(timeout=30) == 0

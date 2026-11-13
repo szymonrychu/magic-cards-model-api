@@ -3499,3 +3499,82 @@ Retroactive audit (2026-09-26) of every change to pre-existing test content in a
 - 2026-11-12 T-158 verified on the engine: a player who draws from an empty library loses at the draw step (bob wins at alice's draw; `test_drawing_from_an_empty_library_loses_the_game`). Sandbox libraries start empty, so `SpecPlayer.library_filler {name, count 1-60}` puts copies under the library after the spec's own cards. `SpecCard.face_up` maps to `PutCard.face_up`; the admin view names a face-down card only in `card_name` (`name` is ""), so `compact_state` shows `card_name` and `face_down: true`. Hiding from the other seat applies to shared zones such as exile (`visibility._redact_facedown_card`), not to the battlefield.
 - 2026-11-12 T-158 `sim_card_lookup` (`sim/lookup.py`) runs in the server process (no worker, no slot): `scryfall.fetch_card` (cache, bundled printings, exact then fuzzy; an ambiguous fuzzy name 404s and reads `not_found`) and `decks.deck_support_warnings_from_cards` for `engine_support`. Bounded by 40 names and the call budget (`call_timeout_s - 5`); names past it come back `not_checked`.
 - 2026-11-12 T-158 board-photo guide decisions (user): confirm recognised cards only when a card is uncertain; the scenario holds only what the player sees; the opponent's next turn is reasoned in text, not simulated (the current turn is); candidate plays are compared with snapshot/restore in one sandbox. When the user names the opponent's deck, lines are tested against a few likely answers. No new engine support was needed: `sim_act add_card` (admin route) already adds a card mid-sandbox and answers `added.card_id`; the opponent must hold priority (the player passes first) to cast it. Labels exist only for setup cards, so the guide tells the agent to use the returned `card_id`. `restore` removes the added card with the rest of the line. Covered by `test_an_opponent_answer_can_be_added_mid_sandbox_and_restore_removes_it`.
+- 2026-11-13 - mtg-sim retro follow-ups (T-201, spec S-38; decisions 552-558). Q1=B: the store
+  leak guard covers more than games. `tests/conftest.py` `_no_leaked_games` (autouse, set up first,
+  torn down last so after `client`'s own cleanup) diffs a before/after snapshot of store games,
+  user preferences and the three module-level sim managers' held sandboxes, batches and Claude
+  matches, via new public accessors (`GameRepository.user_preference_subs`/`delete_user_preferences`,
+  `live_ids()` on `SandboxManager`/`BatchManager`/`ClaudeMatchManager`) instead of reaching into
+  private dicts. It diffs rather than asserting empty so a session-scoped fixture that owns a game
+  stays legal; it cleans up what leaked (games, preferences, sandboxes) and then fails the culprit
+  by node id, so one leak does not turn into a confusing victim. A session-end fixture asserts the
+  store holds no game, which catches a background thread creating one after its test returned
+  (`ClaudeMatchManager._start_in_background`). No opt-out marker: none is needed (zero leaks on
+  main). Runs on both passes. A batch or Claude match cannot be removed from its manager short of a
+  shutdown, so the guard only reports those. Why: a leaked game from a test that never used
+  `client` broke `test_listing_games_survives_one_that_cannot_be_decoded` on whichever test ran
+  after it on the same xdist worker (CI runs 43288555603 and 43278936127).
+- 2026-11-13 - the user-preferences ordering bug. `PUT /api/me/preferences` writes the singleton
+  store's `_user_preferences` and nothing cleared it, so `test_a_second_put_replaces_rather_than_merges`
+  running before `test_get_defaults_to_empty_for_a_first_time_user` on one worker failed the latter
+  (`{'c': 3} == {}`); file order hid it. Fixed in `tests/test_user_preferences.py` with an autouse
+  fixture that forgets all preferences before and after each test (no assertion was touched). A
+  unique `sub` per test would not have been enough: the leak guard would then flag the leftover rows.
+- 2026-11-13 - pytest-randomly 5.1 is a dev dependency (Q2=A, `uv add --dev`), with no workflow or
+  mise change: every `mise run test`/`test:pg` run, local and CI, is shuffled and prints its seed,
+  and `-p no:randomly` opts out (README "Shuffled test order"). The repo's `-q` addopts hides
+  pytest-randomly's own header line, so `tests/conftest.py` `pytest_terminal_summary` reprints the seed. Why: the #86 leak only surfaced
+  because xdist happened to hand the victim a different neighbour; shuffling varies that on every PR
+  and the guard names the culprit. The other candidate, a separate CI job with pytest-random-order,
+  would cost an extra runner for ~15-20 min and leave the default runs deterministic. Wall-clock
+  tests (`test_buddy_drafts` 2.5 s budget, sim worker start timeouts, the mtgo time budget) fail under
+  CPU load regardless of order; they are not ordering bugs (the ones the first shuffled runs hit
+  are fixed; see the shuffled-order flakes entry below).
+- 2026-11-13 - `test_a_multi_call_run_still_stops_at_its_own_declare_attackers_step` is deterministic
+  (Q3=A). It asserted `calls > 1` while bob ran as a free-running `Opponent` thread, so whether alice
+  ever saw "bob holds priority" (a hand-back, hence a second `pass_until` call) was scheduler luck
+  (measured: 2, 3 or 4 calls over 15 runs); CI run 43320061972 failed it. It now runs bob in lockstep
+  (`Opponent.answer_once`, once and synchronously, after each of alice's unfinished calls) and asserts
+  the exact count, 4 (upkeep, draw, main1, stop). Test-only change; the other tests keep the thread.
+- 2026-11-13 - `mise run k8s:smoke <version>` (Q4=A) is a separate task, run by hand after
+  `k8s:deploy`, and is not chained into it. Why: the deploy stays the plain phased apply it is, and the
+  smoke check needs `create pods/exec`, which a deploy-only kubeconfig may not have; it is a repeatable
+  check an owner runs when the rollout is done. It checks the image tag and rollout, the key NAMES of
+  Secret `mtg-agent` (never values), and runs `scripts/smoke_deploy.py` in the pod over `kubectl exec -i`
+  (health, MCP tool list with the pod's own `MTG_SIM_TOKEN`, lobby default claude-opus-5-5/low, seat Job
+  without `CLAUDE_CODE_EFFORT_LEVEL`). Non-zero on any failure; the token is never printed and is
+  scrubbed from error text. Owner: the mtg-sim-retro session (T-201 decision 559).
+  mise renders `{{ }}` as templates in `run`, so the Secret key go-template is wrapped in `{% raw %}`.
+- 2026-11-13 - preset check for the mtg-sim MCP server: the `mtg` and `marek-mtg` presets both already
+  have `mcp_servers.mtg-sim`, so no preset change was needed. `marek-mtg` allows `mcp__mtg-sim__*`;
+  `mtg` has only a deny list (nothing to widen). Outcomes of the end-to-end run and the deploy are filled
+  in by the later plan steps (6-7).
+- 2026-11-13 - guard cost and a catch while building it. The guard adds two cheap reads per test
+  (`ids()` and `user_preference_subs()`): about 0.9 ms against a real `PostgresRepository` (200-call
+  measurement), so roughly 9 s of CPU over the ~9.4k tests spread across six workers, and only if
+  the singleton is postgres. In `mise run test:pg` the singleton stays in-memory (only
+  `MCM_TEST_DATABASE_URL` is set), so the added cost there is negligible. The postgres pass also
+  caught a design mistake on its first run: `postgres_store_testkit.postgres_store` rebinds the
+  `store` name in every module, conftest included, and the swap is still in place when the guard
+  tears down, so the guard diffed the singleton before against a throwaway `PostgresRepository`
+  after and blamed `test_review[...-postgres]` for another test's leftover rows. The guard now
+  captures the singleton at import (`_SINGLETON_STORE`) and never reads the patched name.
+- 2026-11-13 - shuffled-order flakes found by the first full `-p randomly` runs (seeds 101/202/303),
+  all fixed test-side, no production change. (1) `bob_acts_then_passes` in `tests/test_autopass.py`
+  was a fire-and-forget 4000-poll thread joined for 1s: it kept polling (into 404s once the game was
+  deleted) and logging `httpx` lines into whatever test ran next on the worker. Reproduced on main
+  (`test_activity.py::test_a_half_written_line_is_held_until_its_newline_arrives`). It is now a context
+  manager that stops, joins and asserts the thread is gone, and exits on 404; the `agent_log` fixture
+  in `tests/wrapper/test_activity.py` also reads only the `agent` logger, which is what it names.
+  (2) `test_a_run_does_not_echo_its_own_declare_blockers_decision_when_the_commit_is_slow` slowed
+  every `_call_watching_for_self_decision` call, priority passes included (2.4s of sleep per lap, so
+  the 5s per-call bound failed under load), and never reached `perform_declare` at all: bob had no
+  creature, so "declare nobody" was forced and `auto_answer_forced` answered it. bob now has a
+  Llanowar Elves, only `perform_declare` is slowed, and the test asserts it was. (3)
+  `test_a_hand_back_that_actually_waited_says_how_long_and_how_many` ran a real 0.3s wait; a slow
+  first call left no time to retry. It now jumps seatkit's own clock after the second internal call.
+  (4) the driver's checkout-lock review test bounded the handover at 0.4s against a 0.5s review; it
+  now holds the review on an Event (`wrapper_review_gate` in `tests/driver/world.py`) and asserts no
+  review landed before the handover answered. (5) `test_exit_lifecycle.py` used `pkill`, missing in
+  the agent pods (procps), so it failed on every run there; it now finds the stub child through
+  `/proc` and sends SIGTERM itself.
