@@ -3585,3 +3585,10 @@ Retroactive audit (2026-09-26) of every change to pre-existing test content in a
   callback never runs under the lock), so a test that waits on `current_turn_id is None` can read
   `done` before the callback appends. The test now waits on `done`, then checks the cleared turn;
   every sibling in `tests/wrapper` already waited on the callback list. No production change.
+
+- 2026-11-13 - v0.11.1 ships engine fix protection-battlefield-only (magic-cards-model PR 53,
+  merge d2bba857): protection now applies to permanents only (CR 702.16b), so a spell on the
+  stack such as Emrakul, the Promised End is a legal target for Consign to Memory. No code change
+  here: this repo consumes the engine as a path dependency and CI checks out magic-cards-model
+  main unpinned, and `scripts/next_version.py` prints nothing while HEAD carries a tag (v0.11.0),
+  so this release-note commit is what makes main untagged and cuts v0.11.1 with rebuilt images.
