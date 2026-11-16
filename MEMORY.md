@@ -3605,3 +3605,10 @@ Retroactive audit (2026-09-26) of every change to pre-existing test content in a
   pass run covers, so a pager resumes at `end_seq or seq` with no overlap. `head_tail` caps the
   kept head at three quarters of the budget so the newest lines always fit. Shared ledger
   fixtures live in `tests/sim_claude_kit.py` (test modules cannot import each other's helpers).
+- 2026-11-16 - `sim_claude_matches` (revision `9b3e5d7a1c24`, head after `e7c4a913f256`) holds the
+  persisted Claude-seat match header: 13 columns, no seat uid column, `game_id` stored but never
+  answered. One writer (ClaudeMatchManager, Task 5); repository methods `put/get/list/
+  fail_live/delete_before` on both repositories, rows are plain dicts with aware datetimes.
+  `fail_live_sim_claude_matches` is one status-guarded UPDATE ... RETURNING. The postgres params
+  of `tests/test_sim_match_rows.py` and `test_head_creates_sim_claude_matches` only run under
+  `mise run test:pg` (no Docker in the agent pod).

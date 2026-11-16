@@ -61,12 +61,14 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
+    Index,
     Integer,
     LargeBinary,
     MetaData,
     PrimaryKeyConstraint,
     String,
     Table,
+    Text,
     UniqueConstraint,
     create_engine,
 )
@@ -207,6 +209,31 @@ user_preferences = Table(
     Column("updated_at", DateTime(timezone=True), nullable=False),
 )
 
+sim_claude_matches = Table(
+    "sim_claude_matches",
+    metadata,
+    # The header of one Claude-seat sim match (`sim.claude.ClaudeMatchManager`
+    # is the only writer), kept so a finished or interrupted match stays
+    # readable after a restart. Retention is the reaper's (30 days). There is
+    # deliberately no seat uid column: uids are never stored. `game_id` is
+    # kept for the server's own log reads and never answered to a caller.
+    Column("match_id", String, primary_key=True),
+    Column("game_id", String, nullable=True),
+    Column("decks", JSONB, nullable=False),
+    Column("seed", BigInteger, nullable=False),
+    # `{"a": {"model", "effort"}, "b": {...}}`.
+    Column("seats", JSONB, nullable=False),
+    # starting | running | stalled | done | deadline | failed | cancelled.
+    Column("status", String, nullable=False),
+    Column("error", Text, nullable=True),
+    Column("result", JSONB, nullable=True),
+    Column("started_at", DateTime(timezone=True), nullable=False),
+    Column("finished_at", DateTime(timezone=True), nullable=True),
+    Column("last_seq", Integer, nullable=True),
+    Column("last_progress_at", DateTime(timezone=True), nullable=True),
+    Column("stalled_reason", Text, nullable=True),
+    Index("ix_sim_claude_matches_started_at", "started_at"),
+)
 
 #: The component variables a DSN is assembled from when `DATABASE_URL` is not
 #: set. They are named for what CloudNativePG publishes in a cluster's Secret

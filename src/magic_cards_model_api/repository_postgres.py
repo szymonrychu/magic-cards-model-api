@@ -84,7 +84,7 @@ import functools
 import json
 import logging
 import threading
-from collections.abc import Iterable, Iterator
+from collections.abc import Collection, Iterable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from enum import Enum
@@ -101,9 +101,17 @@ from sqlalchemy.engine import Engine
 
 from .agent_settings import AgentSettings
 from .commands import Command
-from .db import games, make_engine, record_states, records, user_preferences
+from .db import (
+    games,
+    make_engine,
+    record_states,
+    records,
+    sim_claude_matches,
+    user_preferences,
+)
 from .repository import (
     DEFAULT_RESERVATION_TTL_SECONDS,
+    SIM_MATCH_LIVE_STATUSES,
     Advisor,
     ArchivedGame,
     GameUnloadable,
@@ -1210,3 +1218,51 @@ class PostgresRepository:
     def delete_user_preferences(self, sub: str) -> None:
         with self._engine.begin() as conn:
             conn.execute(delete(user_preferences).where(user_preferences.c.sub == sub))
+
+    # -- sim Claude-seat match headers (one writer: ClaudeMatchManager) -----
+
+    def put_sim_claude_match(self, row: dict[str, Any]) -> None:
+        stmt = pg_insert(sim_claude_matches).values(**row)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[sim_claude_matches.c.match_id],
+            set_={k: getattr(stmt.excluded, k) for k in row if k != "match_id"},
+        )
+        with self._engine.begin() as conn:
+            conn.execute(stmt)
+
+    def get_sim_claude_match(self, match_id: str) -> dict[str, Any] | None:
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                select(sim_claude_matches).where(sim_claude_matches.c.match_id == match_id)
+            ).first()
+        return dict(row._mapping) if row is not None else None
+
+    def list_sim_claude_matches(self, limit: int) -> list[dict[str, Any]]:
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                select(sim_claude_matches)
+                .order_by(sim_claude_matches.c.started_at.desc())
+                .limit(limit)
+            ).all()
+        return [dict(row._mapping) for row in rows]
+
+    def fail_live_sim_claude_matches(
+        self, error: str, finished_at: datetime, keep: Collection[str] = ()
+    ) -> list[str]:
+        stmt = (
+            update(sim_claude_matches)
+            .where(sim_claude_matches.c.status.in_(SIM_MATCH_LIVE_STATUSES))
+            .values(status="failed", error=error, finished_at=finished_at, stalled_reason=None)
+            .returning(sim_claude_matches.c.match_id)
+        )
+        if keep:
+            stmt = stmt.where(sim_claude_matches.c.match_id.not_in(list(keep)))
+        with self._engine.begin() as conn:
+            return [row[0] for row in conn.execute(stmt).all()]
+
+    def delete_sim_claude_matches_before(self, cutoff: datetime) -> int:
+        with self._engine.begin() as conn:
+            result = conn.execute(
+                delete(sim_claude_matches).where(sim_claude_matches.c.finished_at < cutoff)
+            )
+        return result.rowcount

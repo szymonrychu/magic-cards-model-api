@@ -61,6 +61,9 @@ SCRIPTS_PREDECESSOR = "b8d24f6c1a07"
 #: 0a049fede5b1_add_record_states.py`'s own `down_revision`.
 RECORD_STATES_PREDECESSOR = "d5b2e8f4a913"
 
+#: The revision that was head before `sim_claude_matches` was added.
+SIM_MATCHES_PREDECESSOR = "e7c4a913f256"
+
 
 @contextmanager
 def _scratch_database() -> Iterator[str]:
@@ -508,6 +511,42 @@ def test_downgrade_from_head_drops_record_states() -> None:
         engine = create_engine(url, future=True)
         try:
             assert "record_states" not in set(inspect(engine).get_table_names())
+        finally:
+            engine.dispose()
+
+
+def test_head_creates_sim_claude_matches() -> None:
+    """`9b3e5d7a1c24` adds `sim_claude_matches` and its `started_at` index;
+    stepping back one revision drops the table again."""
+    with _scratch_database() as url:
+        _alembic_to(url, "head")
+        engine = create_engine(url, future=True)
+        try:
+            inspector = inspect(engine)
+            assert {c["name"] for c in inspector.get_columns("sim_claude_matches")} == {
+                "match_id",
+                "game_id",
+                "decks",
+                "seed",
+                "seats",
+                "status",
+                "error",
+                "result",
+                "started_at",
+                "finished_at",
+                "last_seq",
+                "last_progress_at",
+                "stalled_reason",
+            }
+            assert "ix_sim_claude_matches_started_at" in {
+                i["name"] for i in inspector.get_indexes("sim_claude_matches")
+            }
+        finally:
+            engine.dispose()
+        _alembic_downgrade_to(url, SIM_MATCHES_PREDECESSOR)
+        engine = create_engine(url, future=True)
+        try:
+            assert "sim_claude_matches" not in set(inspect(engine).get_table_names())
         finally:
             engine.dispose()
 

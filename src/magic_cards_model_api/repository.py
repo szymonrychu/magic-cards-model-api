@@ -63,7 +63,7 @@ import threading
 import time
 import zlib
 from bisect import bisect_right
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Collection, Iterable, Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -92,6 +92,10 @@ from .commands import Command
 #: instance without needing a constructor argument the contract suite's
 #: zero-argument factories don't have room for.
 DEFAULT_RESERVATION_TTL_SECONDS = 30.0
+
+#: The `sim_claude_matches.status` values of a match that has not ended. A
+#: restart turns every row still in one of these into `failed`.
+SIM_MATCH_LIVE_STATUSES = ("starting", "running", "stalled")
 
 #: How many of a game's newest `records` rows a bounded lookup reads. The
 #: plan gate (`records.require_plan`) sits on the hot action path and asks
@@ -920,6 +924,35 @@ class GameRepository(Protocol):
         The test suite uses it to clean up after itself; no route calls it."""
         ...
 
+    # -- sim Claude-seat match headers (one writer: ClaudeMatchManager) -----
+
+    def put_sim_claude_match(self, row: dict[str, Any]) -> None:
+        """Insert or replace the `sim_claude_matches` row keyed on
+        `row["match_id"]`. `row` holds exactly the 13 column names;
+        datetimes are timezone-aware."""
+        ...
+
+    def get_sim_claude_match(self, match_id: str) -> dict[str, Any] | None:
+        """The stored row for `match_id`, or `None`."""
+        ...
+
+    def list_sim_claude_matches(self, limit: int) -> list[dict[str, Any]]:
+        """At most `limit` rows, newest `started_at` first."""
+        ...
+
+    def fail_live_sim_claude_matches(
+        self, error: str, finished_at: datetime, keep: Collection[str] = ()
+    ) -> list[str]:
+        """Mark every row in `SIM_MATCH_LIVE_STATUSES` whose id is not in
+        `keep` as `failed` (with `error`, `finished_at`, no stalled reason);
+        return their ids."""
+        ...
+
+    def delete_sim_claude_matches_before(self, cutoff: datetime) -> int:
+        """Delete rows with `finished_at < cutoff` (live rows never); return
+        how many."""
+        ...
+
 
 class InMemoryRepository:
     """The in-memory `GameRepository`: game id -> engine `Game`. Nothing
@@ -1029,6 +1062,10 @@ class InMemoryRepository:
         # else in this store - see `get_user_preferences`'s own docstring.
         self._user_preferences: dict[str, dict[str, Any]] = {}
         self._user_preferences_lock = threading.Lock()
+        # match_id -> the `sim_claude_matches` row dict. Own lock: it shares
+        # nothing with games.
+        self._sim_matches: dict[str, dict[str, Any]] = {}
+        self._sim_matches_lock = threading.Lock()
         self._lock = threading.Lock()
         # M8: pending reservations against `MAX_LIVE_GAMES`, keyed by token.
         # Protected by `self._lock`, exactly like everything else here - see
@@ -1291,6 +1328,44 @@ class InMemoryRepository:
     def delete_user_preferences(self, sub: str) -> None:
         with self._user_preferences_lock:
             self._user_preferences.pop(sub, None)
+
+    def put_sim_claude_match(self, row: dict[str, Any]) -> None:
+        with self._sim_matches_lock:
+            self._sim_matches[row["match_id"]] = copy.deepcopy(row)
+
+    def get_sim_claude_match(self, match_id: str) -> dict[str, Any] | None:
+        with self._sim_matches_lock:
+            stored = self._sim_matches.get(match_id)
+            return copy.deepcopy(stored) if stored is not None else None
+
+    def list_sim_claude_matches(self, limit: int) -> list[dict[str, Any]]:
+        with self._sim_matches_lock:
+            rows = sorted(self._sim_matches.values(), key=lambda r: r["started_at"], reverse=True)
+            return copy.deepcopy(rows[:limit])
+
+    def fail_live_sim_claude_matches(
+        self, error: str, finished_at: datetime, keep: Collection[str] = ()
+    ) -> list[str]:
+        failed: list[str] = []
+        with self._sim_matches_lock:
+            for match_id, row in self._sim_matches.items():
+                if row["status"] in SIM_MATCH_LIVE_STATUSES and match_id not in keep:
+                    row.update(
+                        status="failed", error=error, finished_at=finished_at, stalled_reason=None
+                    )
+                    failed.append(match_id)
+        return failed
+
+    def delete_sim_claude_matches_before(self, cutoff: datetime) -> int:
+        with self._sim_matches_lock:
+            old = [
+                match_id
+                for match_id, row in self._sim_matches.items()
+                if row["finished_at"] is not None and row["finished_at"] < cutoff
+            ]
+            for match_id in old:
+                del self._sim_matches[match_id]
+        return len(old)
 
     def admin_key(self, game_id: str) -> str | None:
         """This game's admin key, to hand to whoever just created it."""
