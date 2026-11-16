@@ -729,7 +729,8 @@ class ClaudeMatchManager:
         if status is not None:
             self._finish(match, status, error)
             return
-        if idle >= self._limits.claude_stall_s:
+        # A failed progress read (seq None) is no information, not "no progress".
+        if seq is not None and idle >= self._limits.claude_stall_s:
             reason = self._stall_reason(game_id, game, states, idle)
             if idle >= self._limits.claude_stall_abort_s:
                 abort = self._limits.claude_stall_abort_s

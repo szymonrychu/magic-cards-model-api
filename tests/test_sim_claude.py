@@ -1029,7 +1029,7 @@ def test_list_tool_newest_first(fake_registry):
 # -- S-69: watchdog --
 
 
-def _stalled_manager(monkeypatch=None, **env):
+def _stalled_manager(**env):
     clock = Clock()
     manager = _manager(clock, **env)
     match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
@@ -1157,6 +1157,43 @@ def test_abort_racing_a_cancel_claims_once(fake_registry):
     assert sum(_matches_count(s) for s in terminal) == before + 1
     assert manager._matches[match_id].ended.is_set()
     assert sorted(fake_registry.stopped) == sorted(uids)
+
+
+def test_a_failed_progress_read_neither_stalls_nor_aborts(fake_registry, monkeypatch):
+    from magic_cards_model_api.store import store
+
+    clock, manager, match_id = _stalled_manager()
+
+    def boom(game_id):
+        raise RuntimeError("store down")
+
+    monkeypatch.setattr(store, "max_record_seq", boom)
+    clock.now += 1801
+    manager.reap()
+    assert manager.status(match_id)["status"] == "running"
+    monkeypatch.undo()
+    _finish(manager, match_id)
+
+
+def test_abort_from_an_already_stalled_match(fake_registry):
+    from magic_cards_model_api.store import store
+
+    clock, manager, match_id = _stalled_manager()
+    uids = list(store.seat_uids(_game_id(manager, match_id)))
+    clock.now += 901
+    manager.reap()
+    assert manager.status(match_id)["status"] == "stalled"
+    stopped_before = len(fake_registry.stopped)
+    clock.now += 900
+    manager.reap()
+    answer = manager.status(match_id)
+    assert answer["status"] == "failed"
+    assert answer["error"].startswith("aborted after 1800 s without progress: no action for")
+    assert len(fake_registry.stopped) == stopped_before + len(uids)
+    assert sorted(fake_registry.stopped) == sorted(uids)
+    manager.reap()
+    assert len(fake_registry.stopped) == stopped_before + len(uids)
+    _finish(manager, _start(manager, RED, GREEN, seed=2)["match_id"])
 
 
 def test_stall_gauge_tracks_the_stalled_match(fake_registry):
