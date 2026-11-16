@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import re
 import socket
@@ -15,14 +16,16 @@ from typing import Any
 import httpx2
 import pytest
 import uvicorn
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from mcp.client import Client
 from mcp.client.streamable_http import streamable_http_client
+from mcp.server.mcpserver import Context
 
 from magic_cards_model_api.main import app
 from magic_cards_model_api.sim.config import SimLimits
 from magic_cards_model_api.sim.manager import SandboxManager
-from magic_cards_model_api.sim.server import build_sim_server
+from magic_cards_model_api.sim.server import SimMount, build_sim_server
 
 BOLT_SPEC = json.loads((Path(__file__).parent / "fixtures" / "sim" / "bolt_bears.json").read_text())
 INIT = {
@@ -360,3 +363,56 @@ def test_board_photo_guide_is_in_the_instructions_and_the_readme():
         assert "photo" in text
         for step in ("sim_card_lookup", "sim_new", "sim_snapshot", "sim_restore", "library_filler"):
             assert step in text, step
+
+
+@contextlib.contextmanager
+def progress_app(monkeypatch, server, manager, claude=None) -> Iterator[str]:
+    """Serve a fresh SimMount at /sim on a real socket; yield its /sim/mcp URL."""
+    monkeypatch.setenv("MTG_SIM_TOKEN", "t0k")
+    mount = SimMount(server, manager, claude=claude)
+    fastapi_app = FastAPI(lifespan=mount.lifespan)
+    fastapi_app.mount("/sim", mount)
+    port = _free_port()
+    uv = uvicorn.Server(
+        uvicorn.Config(fastapi_app, host="127.0.0.1", port=port, log_level="warning")
+    )
+    thread = threading.Thread(target=uv.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 10
+    while not uv.started and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert uv.started
+    try:
+        yield f"http://127.0.0.1:{port}/sim/mcp"
+    finally:
+        uv.should_exit = True
+        thread.join(timeout=10)
+
+
+def test_progress_notifications_stream_over_the_sim_mount(monkeypatch):
+    limits = SimLimits.from_env({})
+    manager = SandboxManager(limits)
+    server = build_sim_server(manager, limits)
+
+    @server.tool()
+    async def probe_progress(ctx: Context) -> dict[str, Any]:
+        for n in (1, 2, 3):
+            await ctx.report_progress(n, None, f"tick {n}")
+            await asyncio.sleep(0.05)
+        return {"ok": True}
+
+    seen: list[tuple[float, str | None]] = []
+
+    async def on_progress(progress, total, message):
+        seen.append((progress, message))
+
+    async def drive(url: str) -> Any:
+        http = httpx2.AsyncClient(headers={"Authorization": "Bearer t0k"})
+        async with http, Client(streamable_http_client(url, http_client=http)) as client:
+            return await client.call_tool("probe_progress", {}, progress_callback=on_progress)
+
+    with progress_app(monkeypatch, server, manager) as url:
+        result = asyncio.run(drive(url))
+    assert not result.is_error
+    assert [p for p, _ in seen] == [1, 2, 3]
+    assert seen[0][1] == "tick 1"

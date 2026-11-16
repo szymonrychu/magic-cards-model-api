@@ -3594,3 +3594,8 @@ Retroactive audit (2026-09-26) of every change to pre-existing test content in a
   out magic-cards-model main unpinned, and `scripts/next_version.py` prints nothing while HEAD
   carries a tag (v0.11.0), so this release-note commit is what makes main untagged and cuts
   v0.11.2 with rebuilt images.
+- 2026-11-16 - mcp 2.1.1 stateless streamable HTTP streams `notifications/progress` on the
+  tools/call SSE response. `json_response=False` is now passed explicitly in `SimMount.lifespan` so
+  a default change cannot silently turn the wait tool's heartbeats off. Proven by
+  `test_progress_notifications_stream_over_the_sim_mount`; Step 2 outcome: the test already PASSED
+  before the explicit flag (2.1.1 defaults to SSE), so the flag is a pin, not a fix.

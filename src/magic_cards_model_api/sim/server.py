@@ -506,6 +506,8 @@ class SimMount:
         # bearer token (plus the ingress deny) is the guard (see MEMORY).
         starlette_app = self._server.streamable_http_app(
             stateless_http=True,
+            # Progress notifications need the SSE response mode (spec risk 1).
+            json_response=False,
             streamable_http_path="/mcp",
             transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
         )
