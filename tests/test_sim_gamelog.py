@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import pytest
 import sim_claude_kit as kit
+from sim_claude_kit import GREEN, RED
 
 from magic_cards_model_api.sim import gamelog
 from magic_cards_model_api.sim.gamelog import page, parse_filter, project, render
@@ -232,8 +233,6 @@ def test_scrub_replaces_only_the_substring():
 
 
 def test_projects_a_real_record_ledger():
-    from test_sim_claude import GREEN, RED
-
     from magic_cards_model_api import audit
     from magic_cards_model_api.decks_api import boot_decklist_game
     from magic_cards_model_api.store import store
@@ -257,3 +256,15 @@ def test_projects_a_real_record_ledger():
         assert lines[-1].text.split("\n")[0].count(" a pass") == 1
     finally:
         store.delete(game_id)
+
+
+def test_head_tail_marker_counts_every_omitted_line_when_the_head_cap_pops_lines():
+    lines = _lines(kit.ledger(2, 40), flt=parse_filter(None, None, "plays", False, "none", 200))
+    kept, truncated = gamelog.head_tail(lines, max_chars=1_500)
+    assert truncated is True
+    marker = [x for x in kept if "lines omitted" in x.text][0]
+    shown = len([x for x in kept if not x.header and x is not marker])
+    total = len([x for x in lines if not x.header])
+    omitted = int(marker.text.split()[1])
+    assert shown + omitted == total
+    assert shown < 80

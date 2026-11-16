@@ -445,5 +445,6 @@ def head_tail(
         tail.append(line)
         size += len(line.text) + 1
     tail.reverse()
-    omitted = len([x for x in rest if not x.header]) - len([x for x in tail if not x.header])
+    shown = len([x for x in head if not x.header]) + len([x for x in tail if not x.header])
+    omitted = len([x for x in lines if not x.header]) - shown
     return [*head, _marker(omitted, last_seq), *tail], True
