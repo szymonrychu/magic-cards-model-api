@@ -76,6 +76,7 @@ RESTART_ERROR = "the server restarted during the match; the log so far is kept"
 #: The retention sweep of persisted rows runs at most this often (monotonic seconds).
 _RETENTION_EVERY_S = 3600
 _LIST_MAX = 50
+LOG_LIMIT_MAX = 500
 _EFFORTS = get_args(Effort)
 #: A start (boot with cold card resolution, two seat Job creates) that has not finished after
 #: this long is failed by the reaper and its slot freed; a healthy start takes seconds.
@@ -391,6 +392,84 @@ class ClaudeMatchManager:
             game_id = match.game_id
         lines = self._log_lines_for(game_id, match.secrets(), LogFilter())
         return {**self._answer(match), "log_tail": gamelog.render(lines[-TAIL_LINES:])}
+
+    def _game_ref(self, match_id: str) -> tuple[_ClaudeMatch | None, dict[str, Any] | None]:
+        """The in-memory match, else its persisted row; refused like `status` when neither."""
+        match = self._find(match_id)
+        if match is not None:
+            return match, None
+        row = self._row(match_id)
+        if row is None:
+            raise self._unknown(match_id)
+        return None, row
+
+    def log(
+        self,
+        match_id: str,
+        since_seq: int = 0,
+        limit: int = 200,
+        turn: int | str | None = None,
+        seat: str | None = None,
+        kinds: str = "plays",
+        reasoning: bool = True,
+        board: str = "changes",
+    ) -> dict[str, Any]:
+        """One page of the compact-v1 log of a match, live or finished (see `gamelog`).
+
+        Pass `next_seq` back as `since_seq` while `more`. A match with no game (the start
+        failed before boot) answers an empty log with a note, never an error."""
+        limit = max(1, min(int(limit), LOG_LIMIT_MAX))
+        since_seq = max(0, int(since_seq))
+        try:
+            flt = gamelog.parse_filter(turn, seat, kinds, reasoning, board, limit)
+        except ValueError as exc:
+            raise SimRefused(str(exc)) from exc
+        match, row = self._game_ref(match_id)
+        if match is not None:
+            with match.lock:
+                game_id, status, step = match.game_id, match.status, match.step
+                cur_turn, stalled_reason = match.turn, match.stalled_reason
+            secrets = match.secrets()
+        else:
+            assert row is not None
+            game_id, status, step = row.get("game_id"), row["status"], None
+            cur_turn, stalled_reason = None, row.get("stalled_reason")
+            secrets = []  # the seat uids are gone with the process
+        out: dict[str, Any] = {
+            "match_id": match_id,
+            "status": status,
+            "format": gamelog.FORMAT,
+            "lines": "",
+            "first_seq": None,
+            "last_seq": None,
+            "next_seq": since_seq,
+            "more": False,
+            "total_rows": 0,
+            "turn": cur_turn,
+            "step": step,
+        }
+        if game_id is None:
+            out["note"] = "the match has no game log (it failed before the game was booted)"
+            return out
+        lines = self._log_lines_for(game_id, secrets, flt, since_seq)
+        kept, more = gamelog.page(lines, limit, gamelog.LOG_ANSWER_MAX_CHARS)
+        text = gamelog.render(kept)
+        actions = [line for line in kept if not line.header]
+        if kept:
+            out["first_seq"] = kept[0].seq
+            out["last_seq"] = kept[-1].end_seq or kept[-1].seq
+        if actions:
+            out["next_seq"] = actions[-1].end_seq or actions[-1].seq
+        out["more"] = more
+        total = self._max_seq(game_id)
+        out["total_rows"] = total or 0
+        if status == "stalled" and stalled_reason:
+            stall = gamelog.ascii_text(f"-- stalled: {stalled_reason}")
+            for secret in secrets:
+                stall = stall.replace(secret, "<redacted>")
+            text = f"{text}\n{stall}" if text else stall
+        out["lines"] = text  # scrubbed per line above; redact() would blank the whole log
+        return out
 
     def list(self, limit: int = 10) -> dict[str, Any]:
         """Recent matches, newest first: persisted rows, with a match held in memory

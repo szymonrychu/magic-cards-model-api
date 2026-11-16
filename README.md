@@ -678,7 +678,7 @@ environment, no database and a memory cap.
 - Reach: in-cluster only. `/sim` is denied at the public ingresses like `/metrics`.
 - Tools: `sim_card_lookup`, `sim_new`, `sim_state`, `sim_legal_actions`, `sim_act`, `sim_snapshot`, `sim_restore`,
   `sim_run_script`, `sim_import_mtgo_log`, `sim_review_mtgo_log`, `sim_end`, `sim_match_claude_start`, `sim_match_claude_status`,
-  `sim_match_claude_cancel`; and,
+  `sim_match_claude_cancel`, `sim_match_log`; and,
   only when `MTG_SIM_BASELINE_ENABLED` is set, `sim_play_new`, `sim_match`, `sim_match_status`.
   The engine baseline AI is off as an opponent by default: with the flag unset those three tools
   are not registered and `BatchManager.start` / `SandboxManager.new(mode="play")` refuse with a
@@ -785,6 +785,11 @@ environment, no database and a memory cap.
   `sim_match_claude_cancel(match_id, reason=None)` stops a starting, running or stalled match
   (seats stopped, game deleted, slot freed, status `cancelled`) and answers the last 20 log lines
   as `log_tail`; a finished match answers its final status unchanged.
+  `sim_match_log(match_id, since_seq=0, limit=200, turn=None, seat=None, kinds="plays",
+  reasoning=True, board="changes")` answers a page (`compact-v1` text in `lines`, under 40000
+  characters) of every action with the seat's stated reasoning, live or finished; page with
+  `since_seq=next_seq` while `more`. A match that failed before the game booted answers an empty
+  log and a `note`.
   `sim_match_claude_list(limit=10)` lists recent matches (1-50, newest first) from the persisted
   table: `match_id`, `status`, `decks`, `seats`, `started_at`, `finished_at`, `turns`, `winner`,
   `error`; use it to find a `match_id` after a restart or a lost context. Match headers are

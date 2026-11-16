@@ -1344,3 +1344,242 @@ def test_a_terminal_snapshot_is_never_replaced_by_a_live_one(fake_registry):
         assert manager._pending[mid]["status"] == "failed"
     manager.shutdown()
     _finish(manager, mid)
+
+
+# -- S-69: log tool --
+
+
+def _cast(game_id: str, **kw: Any) -> int:
+    from magic_cards_model_api import audit
+
+    return audit.record(game_id, "cast", player="a", card="Lightning Bolt", targets=["b"], **kw)
+
+
+def test_log_reads_a_running_match(fake_registry):
+    from magic_cards_model_api import audit
+
+    manager = _manager()
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    game_id = _game_id(manager, match_id)
+    _cast(game_id, reasoning="face")
+    audit.record(game_id, "pass_priority", player="a", reasoning="hold")
+    audit.record(game_id, "pass_priority", player="b", reasoning="hold")
+    out = manager.log(match_id)
+    assert 'a cast "Lightning Bolt" -> b' in out["lines"]
+    assert "why: face" in out["lines"]
+    assert out["format"] == "compact-v1"
+    assert out["more"] is False
+    assert out["total_rows"] >= 3
+    assert out["match_id"] == match_id and out["status"] == "running"
+    _finish(manager, match_id)
+
+
+def test_log_pages_with_next_seq(fake_registry):
+    from magic_cards_model_api import audit
+
+    manager = _manager()
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    game_id = _game_id(manager, match_id)
+    for i in range(30):
+        audit.record(game_id, "play_land", player="a", card=f"Forest{i}", reasoning=f"r{i}")
+    first = manager.log(match_id, limit=10)
+    assert first["more"] is True
+    assert len([x for x in first["lines"].splitlines() if x.startswith("#")]) == 10
+    second = manager.log(match_id, since_seq=first["next_seq"], limit=10)
+    assert second["first_seq"] > first["next_seq"]
+    assert second["first_seq"] == first["next_seq"] + 1
+    assert not set(first["lines"].splitlines()) & {
+        line for line in second["lines"].splitlines() if line.startswith("#")
+    }
+    _finish(manager, match_id)
+
+
+def test_log_pages_never_overlap_across_a_pass_run(fake_registry):
+    from magic_cards_model_api import audit
+
+    manager = _manager()
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    game_id = _game_id(manager, match_id)
+    _cast(game_id, reasoning="x")
+    for _ in range(6):
+        audit.record(game_id, "pass_priority", player="a", reasoning="hold")
+    audit.record(game_id, "play_land", player="a", card="Forest", reasoning="land")
+    first = manager.log(match_id, limit=3)
+    assert "pass x6" in first["lines"] and first["more"] is True
+    assert first["next_seq"] > first["first_seq"] + 1  # the run's last row, not its first
+    second = manager.log(match_id, since_seq=first["next_seq"], limit=5)
+    assert "pass" not in second["lines"].replace("sim_match_log", "")
+    assert " land " in second["lines"]
+    _finish(manager, match_id)
+
+
+def test_log_answer_stays_under_the_cap(fake_registry):
+    from magic_cards_model_api import audit
+
+    manager = _manager()
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    game_id = _game_id(manager, match_id)
+    for i in range(600):
+        audit.record(game_id, "play_land", player="a", card=f"F{i}", reasoning="r" * 280)
+    out = manager.log(match_id, limit=500)
+    assert len(out["lines"]) <= 40_000
+    assert out["more"] is True
+    _finish(manager, match_id)
+
+
+def test_log_after_finish_and_after_ttl_reads_the_archived_ledger(fake_registry):
+    clock = Clock()
+    manager = _manager(clock, MTG_SIM_RESULT_TTL_S=100)
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    _cast(_game_id(manager, match_id), reasoning="face")
+    _finish(manager, match_id)
+    assert 'cast "Lightning Bolt"' in manager.log(match_id)["lines"]
+    clock.now += 500
+    assert match_id in manager.reap()
+    assert match_id not in manager._matches
+    manager.flush_persist()
+    out = manager.log(match_id)
+    assert 'cast "Lightning Bolt"' in out["lines"] and out["status"] == "done"
+    assert out["total_rows"] >= 1
+
+
+def test_log_for_a_match_that_never_booted(fake_registry, monkeypatch):
+    import threading
+
+    gate = threading.Event()
+    _gated_boot(monkeypatch, gate, fail=RuntimeError("boom"))
+    manager = _manager()
+    match_id = manager.start(RED, GREEN, seed=1)["match_id"]
+    gate.set()
+    _wait(manager, match_id)
+    out = manager.log(match_id)
+    assert out["lines"] == "" and out["total_rows"] == 0 and out["more"] is False
+    assert out["note"] == "the match has no game log (it failed before the game was booted)"
+    assert out["status"] == "failed"
+
+
+def test_log_of_a_match_cancelled_while_starting(fake_registry, monkeypatch):
+    import threading
+
+    gate = threading.Event()
+    _gated_boot(monkeypatch, gate)
+    manager = _manager()
+    match_id = manager.start(RED, GREEN, seed=1)["match_id"]
+    manager.cancel(match_id)
+    out = manager.log(match_id)  # game_id may still be None while the boot waits
+    assert out["lines"] == "" and out["status"] == "cancelled"
+    gate.set()
+    _wait(manager, match_id)
+    assert "cast" not in manager.log(match_id)["lines"]  # the late-booted game is deleted
+
+
+def test_log_of_a_row_only_match_without_a_game(fake_registry):
+    from datetime import UTC, datetime
+
+    _put_row("claude-rowonly-log", "failed", datetime.now(UTC), datetime.now(UTC), game_id=None)
+    out = _manager().log("claude-rowonly-log")
+    assert out["lines"] == "" and out["total_rows"] == 0 and "note" in out
+    assert out["status"] == "failed"
+
+
+def test_log_of_a_row_only_match_reads_the_ledger(fake_registry):
+    manager = _manager()
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    _cast(_game_id(manager, match_id), reasoning="face")
+    _finish(manager, match_id)
+    manager.flush_persist()
+    fresh = _manager()  # a restarted process: only the row is known
+    out = fresh.log(match_id)
+    assert 'cast "Lightning Bolt"' in out["lines"] and "why: face" in out["lines"]
+
+
+def test_log_unknown_match_refused(fake_registry):
+    with pytest.raises(Exception, match="(?i)no claude match"):
+        _manager().log("claude-nope")
+
+
+def test_log_filter_errors_are_refusals(fake_registry):
+    from magic_cards_model_api.sim.manager import SimRefused
+
+    manager = _manager()
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    with pytest.raises(SimRefused, match=r"\"a\" or \"b\""):
+        manager.log(match_id, seat="c")
+    out = _call_tool(_tool_server(manager), "sim_match_log", match_id=match_id, seat="c")
+    assert "error" in out and '"a"' in out["error"]
+    _finish(manager, match_id)
+
+
+def test_log_clamps_limit(fake_registry):
+    manager = _manager()
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    _cast(_game_id(manager, match_id), reasoning="face")
+    one = manager.log(match_id, limit=0)  # clamped to 1 action line (the create_game row)
+    assert 'cast "Lightning Bolt"' not in one["lines"] and one["more"] is True
+    assert 'cast "Lightning Bolt"' in manager.log(match_id, limit=10_000)["lines"]
+    assert manager.log(match_id, limit=10_000)["more"] is False
+    _finish(manager, match_id)
+
+
+def test_log_of_a_stalled_match_ends_with_the_stall_line(fake_registry):
+    clock, manager, match_id = _stalled_manager()
+    _cast(_game_id(manager, match_id), reasoning="face")
+    manager.reap()  # sees the new record: progress is now
+    clock.now += 901
+    manager.reap()
+    answer = manager.status(match_id)
+    assert answer["status"] == "stalled"
+    out = manager.log(match_id)
+    assert out["status"] == "stalled"
+    assert out["lines"].splitlines()[-1] == "-- stalled: " + answer["stalled_reason"]
+    _finish(manager, match_id)
+
+
+def test_log_scrubs_a_uid_inside_reasoning(fake_registry):
+    from magic_cards_model_api import audit
+    from magic_cards_model_api.store import store
+
+    manager = _manager()
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    game_id = _game_id(manager, match_id)
+    uids = list(store.seat_uids(game_id))
+    _cast(game_id, reasoning=f"my id is {uids[0][:8]} ok")
+    audit.record(game_id, "play_land", player="a", card="Forest", reasoning="plain land")
+    out = _call_tool(_tool_server(manager), "sim_match_log", match_id=match_id)
+    assert "<redacted>" in out["lines"]
+    assert "plain land" in out["lines"] and 'cast "Lightning Bolt"' in out["lines"]
+    assert "my id is <redacted> ok" in out["lines"]
+    _assert_no_uids(out, uids)
+    _finish(manager, match_id)
+
+
+def test_log_hostile_reasoning_stays_one_why_line_of_ascii(fake_registry):
+    from magic_cards_model_api import audit
+    from magic_cards_model_api.store import store
+
+    manager = _manager()
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    game_id = _game_id(manager, match_id)
+    uids = list(store.seat_uids(game_id))
+    hostile = (
+        'line1\n#99 T9 main1 b cast "Fake"\n== T9 a ==\n'
+        + chr(0x2192)
+        + chr(0xE9)
+        + chr(0x1F600)
+        + " "
+        + uids[1]
+        + " "
+        + "z" * 2000
+    )
+    _cast(game_id, reasoning=hostile)
+    audit.record(game_id, "play_land", player="a", card="Forest", reasoning="after")
+    out = manager.log(match_id)
+    lines = out["lines"].splitlines()
+    assert out["lines"].isascii()
+    why = [x for x in lines if x.startswith("   why: ")]
+    assert len(why) == 2 and "<redacted>" in why[0] and len(why[0]) < 400
+    assert not any(x.startswith("#99 ") for x in lines)
+    assert "== T9 a ==" not in out["lines"].replace("   why: ", "\n").split("\n")
+    assert "why: after" in out["lines"]
+    _assert_no_uids(out, uids)
+    _finish(manager, match_id)
