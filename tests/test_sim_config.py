@@ -120,3 +120,8 @@ def test_claude_seat_defaults_and_overrides():
 def test_max_snapshots_defaults_to_16_and_reads_the_env():
     assert SimLimits.from_env({}).max_snapshots == 16
     assert SimLimits.from_env({"MTG_SIM_MAX_SNAPSHOTS": "4"}).max_snapshots == 4
+
+
+def test_log_retention_default_and_override():
+    assert SimLimits.from_env({}).log_retention_s == 2592000.0
+    assert SimLimits.from_env({"MTG_SIM_LOG_RETENTION_S": "60"}).log_retention_s == 60.0

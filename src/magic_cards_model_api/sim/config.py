@@ -66,6 +66,7 @@ class SimLimits:
     claude_effort: str
     claude_models: tuple[str, ...]
     max_snapshots: int
+    log_retention_s: float
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> SimLimits:
@@ -88,4 +89,5 @@ class SimLimits:
             claude_effort=_text(env, "MTG_SIM_CLAUDE_EFFORT", DEFAULT_CLAUDE_EFFORT),
             claude_models=_names(env, "MTG_SIM_CLAUDE_MODELS", DEFAULT_CLAUDE_MODELS),
             max_snapshots=_number(env, "MTG_SIM_MAX_SNAPSHOTS", 16, int),
+            log_retention_s=_number(env, "MTG_SIM_LOG_RETENTION_S", 2592000, float),
         )

@@ -147,12 +147,16 @@ def fake_registry(monkeypatch):
     return fake
 
 
-def _manager(clock=None, **env):
+def _manager(clock=None, wall=None, **env):
+    from datetime import UTC, datetime
+
     from magic_cards_model_api.sim.claude import ClaudeMatchManager
     from magic_cards_model_api.sim.config import SimLimits
 
     limits = SimLimits.from_env({k: str(v) for k, v in env.items()})
-    return ClaudeMatchManager(limits, clock=clock or Clock())
+    return ClaudeMatchManager(
+        limits, clock=clock or Clock(), wall=wall or (lambda: datetime.now(UTC))
+    )
 
 
 def _wait(manager, match_id: str) -> None:

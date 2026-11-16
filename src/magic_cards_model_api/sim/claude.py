@@ -37,6 +37,7 @@ import time
 import uuid
 from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from typing import Any, get_args
 from uuid import UUID
 
@@ -66,6 +67,10 @@ _DEAD_STATES = frozenset({"gone", "error"})
 _LIVE = ("starting", "running", "stalled")
 TERMINAL = frozenset({"done", "deadline", "failed", "cancelled"})
 _REASON_MAX = 200
+RESTART_ERROR = "the server restarted during the match; the log so far is kept"
+#: The retention sweep of persisted rows runs at most this often (monotonic seconds).
+_RETENTION_EVERY_S = 3600
+_LIST_MAX = 50
 _EFFORTS = get_args(Effort)
 #: A start (boot with cold card resolution, two seat Job creates) that has not finished after
 #: this long is failed by the reaper and its slot freed; a healthy start takes seconds.
@@ -82,6 +87,9 @@ STALL_SECONDS = Gauge(
     "Seconds without a new record of the longest-stalled live Claude match (0 when none)",
     registry=REGISTRY,
 )
+
+
+_EPOCH = datetime.min.replace(tzinfo=UTC)
 
 
 def _count(status: str) -> None:
@@ -106,6 +114,8 @@ class _ClaudeMatch:
     result: dict[str, Any] | None = None
     error: str | None = None
     finished: float | None = None
+    started_wall: datetime | None = None  # wall time of `start`, the row's started_at
+    finished_wall: datetime | None = None  # stamped when the match first becomes terminal
     support: dict[str, Any] = field(default_factory=lambda: support_unknown("pending"))
     lock: threading.Lock = field(default_factory=threading.Lock)
     ended: threading.Event = field(default_factory=threading.Event)  # set on the terminal claim
@@ -115,9 +125,17 @@ class _ClaudeMatch:
 
 
 class ClaudeMatchManager:
-    def __init__(self, limits: SimLimits, clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(
+        self,
+        limits: SimLimits,
+        clock: Callable[[], float] = time.monotonic,
+        wall: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
         self._limits = limits
         self._clock = clock
+        self._wall = wall
+        self._persist_lock = threading.Lock()  # orders the row writes of one manager
+        self._last_retention: float | None = None
         self._lock = threading.Lock()
         self._matches: dict[str, _ClaudeMatch] = {}
 
@@ -169,6 +187,8 @@ class ClaudeMatchManager:
                     " runs at a time: poll it or retry later."
                 )
             self._matches[match.match_id] = match
+        match.started_wall = self._wall()
+        self._persist(match)
         match.booting = threading.Thread(
             target=self._start_in_background,
             args=(match, text_a, text_b),
@@ -235,9 +255,12 @@ class ClaudeMatchManager:
             error = f"The match could not be started ({type(exc).__name__}). Try again."
         if error is None:
             with match.lock:
-                if match.status == "starting":
+                promoted = match.status == "starting"
+                if promoted:
                     match.status = "running"
-                    return
+            if promoted:
+                self._persist(match)
+                return
         elif self._finish(match, "failed", error, expect=("starting",)):
             return
         # Already failed by the start deadline or cancelled while this thread ran: clean up
@@ -307,24 +330,40 @@ class ClaudeMatchManager:
     def _compute_support(match: _ClaudeMatch, text_a: str, text_b: str) -> None:
         match.support = checked_support(text_a, text_b)
 
-    def _get(self, match_id: str) -> _ClaudeMatch:
+    def _find(self, match_id: str) -> _ClaudeMatch | None:
         with self._lock:
-            match = self._matches.get(match_id)
-        if match is None:
-            raise SimRefused(
-                f"No Claude match {match_id}; finished results are kept"
-                f" {self._limits.result_ttl_s:g} s. Start one with sim_match_claude_start."
-            )
-        return match
+            return self._matches.get(match_id)
+
+    def _unknown(self, match_id: str) -> SimRefused:
+        return SimRefused(
+            f"No Claude match {match_id}; finished matches are kept"
+            f" {self._limits.log_retention_s:g} s. Start one with sim_match_claude_start, or"
+            " list recent ones with sim_match_claude_list."
+        )
 
     def status(self, match_id: str) -> dict[str, Any]:
-        """The match as the reaper last saw it; no cluster I/O, no lock held across I/O."""
-        return self._answer(self._get(match_id))
+        """The match as the reaper last saw it; no cluster I/O, no lock held across I/O.
+        A match this process no longer holds (result TTL, restart) answers from its row."""
+        match = self._find(match_id)
+        if match is not None:
+            return self._answer(match)
+        row = self._row(match_id)
+        if row is None:
+            raise self._unknown(match_id)
+        return self._answer_from_row(row)
 
     def cancel(self, match_id: str, reason: str | None = None) -> dict[str, Any]:
         """Stop a starting, running or stalled match: seats stopped, game deleted, slot freed,
-        log kept. A terminal match answers its final status unchanged."""
-        match = self._get(match_id)
+        log kept. A terminal match answers its final status unchanged, and so does a match
+        known only from its persisted row (nothing in this process to stop)."""
+        match = self._find(match_id)
+        if match is None:
+            row = self._row(match_id)
+            if row is None:
+                raise self._unknown(match_id)
+            lines = self._log_lines_for(row.get("game_id"), [], LogFilter())
+            out = self._answer_from_row(row)
+            return {**out, "log_tail": gamelog.render(lines[-TAIL_LINES:])}
         error = "cancelled by caller"
         text = " ".join(gamelog.ascii_text(reason or "").split())[:_REASON_MAX]
         if text:
@@ -334,6 +373,116 @@ class ClaudeMatchManager:
             game_id = match.game_id
         lines = self._log_lines_for(game_id, match.secrets(), LogFilter())
         return {**self._answer(match), "log_tail": gamelog.render(lines[-TAIL_LINES:])}
+
+    def list(self, limit: int = 10) -> dict[str, Any]:
+        """Recent matches, newest first: persisted rows, with a match held in memory
+        reporting its live status. A store failure leaves the in-memory matches."""
+        limit = max(1, min(_LIST_MAX, int(limit)))
+        entries: dict[str, dict[str, Any]] = {}
+        try:
+            from magic_cards_model_api.store import store
+
+            rows = store.list_sim_claude_matches(limit)
+        except Exception as exc:  # noqa: BLE001 - the list stands without the table
+            logger.warning("claude sim list failed (%s)", type(exc).__name__)
+            rows = []
+        for row in rows:
+            result = row.get("result") or {}
+            entries[row["match_id"]] = {
+                "match_id": row["match_id"],
+                "status": row["status"],
+                "decks": row["decks"],
+                "seats": row["seats"],
+                "started_at": row["started_at"],
+                "finished_at": row["finished_at"],
+                "turns": result.get("turns"),
+                "winner": result.get("winner"),
+                "error": row["error"],
+            }
+        with self._lock:
+            held = list(self._matches.values())
+        for match in held:
+            with match.lock:
+                result = match.result or {}
+                entries[match.match_id] = {
+                    "match_id": match.match_id,
+                    "status": match.status,
+                    "decks": dict(match.decks),
+                    "seats": _seat_echo(match.seat_settings),
+                    "started_at": match.started_wall,
+                    "finished_at": match.finished_wall,
+                    "turns": result.get("turns"),
+                    "winner": result.get("winner"),
+                    "error": match.error,
+                }
+        newest = sorted(entries.values(), key=lambda e: e["started_at"] or _EPOCH, reverse=True)
+        for entry in newest:
+            for key in ("started_at", "finished_at"):
+                if entry[key] is not None:
+                    entry[key] = entry[key].isoformat()
+        return {"matches": newest[:limit]}
+
+    def _row(self, match_id: str) -> dict[str, Any] | None:
+        from magic_cards_model_api.store import store
+
+        try:
+            return store.get_sim_claude_match(match_id)
+        except Exception as exc:  # noqa: BLE001 - an unreadable row is an unknown match
+            logger.warning("claude sim row read failed (%s)", type(exc).__name__)
+            return None
+
+    def _persist(self, match: _ClaudeMatch) -> None:
+        """Write the match header row (write-through). Never raises: the match runs from
+        memory when the store is down. The snapshot is taken inside `_persist_lock`, so the
+        newest state is the last write."""
+        from magic_cards_model_api.store import store
+
+        try:
+            with self._persist_lock:
+                with match.lock:
+                    row = {
+                        "match_id": match.match_id,
+                        "game_id": match.game_id,
+                        "decks": dict(match.decks),
+                        "seed": match.seed,
+                        "seats": _seat_echo(match.seat_settings),
+                        "status": match.status,
+                        "error": match.error,
+                        "result": match.result,
+                        "started_at": match.started_wall,
+                        "finished_at": match.finished_wall,
+                        "last_seq": None,  # Task 6 fills the progress fields
+                        "last_progress_at": None,
+                        "stalled_reason": None,
+                    }
+                store.put_sim_claude_match(row)
+        except Exception as exc:  # noqa: BLE001 - persistence must never stop a match
+            logger.warning("claude sim match persist failed (%s)", type(exc).__name__)
+
+    def _answer_from_row(self, row: dict[str, Any]) -> dict[str, Any]:
+        """`_answer` for a match this process does not hold: the persisted header."""
+        status = row["status"]
+        started, finished = row["started_at"], row["finished_at"]
+        end = finished if finished is not None else self._wall()
+        out: dict[str, Any] = {
+            "match_id": row["match_id"],
+            "status": status,
+            "elapsed_s": round((end - started).total_seconds(), 1),
+            "deadline_s": self._limits.claude_deadline_s,
+            "decks": dict(row["decks"]),
+            "seed": row["seed"],
+            "turn": None,
+            "step": None,
+            "seats": {seat: {"state": "stopped", **row["seats"][seat]} for seat in _SEATS},
+            **support_unknown("unavailable"),
+        }
+        if status in _LIVE:
+            out["poll_every_s"] = POLL_EVERY_S
+        if row.get("result") is not None:
+            out["result"] = row["result"]
+        if row.get("error") is not None:
+            out["error"] = row["error"]
+        return redact(out)
 
     def _finish(
         self,
@@ -352,10 +501,12 @@ class ClaudeMatchManager:
             if match.status not in expect:
                 return False
             match.status, match.error, match.finished = status, error, self._clock()
+            match.finished_wall = self._wall()
             if result is not None:
                 match.result = result
             match.ended.set()
         _count(status)
+        self._persist(match)
         if cleanup:
             self._cleanup(match)
         return True
@@ -567,7 +718,22 @@ class ClaudeMatchManager:
             ]
             for mid in old:
                 del self._matches[mid]
+        self._drop_old_rows(now)
         return old
+
+    def _drop_old_rows(self, now: float) -> None:
+        """Delete persisted rows past the log retention, at most once per hour."""
+        if self._last_retention is not None and now - self._last_retention < _RETENTION_EVERY_S:
+            return
+        self._last_retention = now
+        from magic_cards_model_api.store import store
+
+        try:
+            store.delete_sim_claude_matches_before(
+                self._wall() - timedelta(seconds=self._limits.log_retention_s)
+            )
+        except Exception as exc:  # noqa: BLE001 - retention is best effort
+            logger.warning("claude sim retention failed (%s)", type(exc).__name__)
 
     def sweep_orphans(self) -> list[str]:
         """Stop and delete every live `SIM_OWNER` game this manager does not track.
@@ -596,7 +762,23 @@ class ClaudeMatchManager:
             swept.append(game_id)
         if swept:
             logger.info("claude sim sweep deleted %d orphaned game(s)", len(swept))
+        self._fail_orphan_rows()
         return swept
+
+    def _fail_orphan_rows(self) -> None:
+        """A restart stopped the seats of every row still live: mark them failed, except the
+        matches this manager holds."""
+        with self._lock:
+            keep = [mid for mid, m in self._matches.items() if m.status in _LIVE]
+        try:
+            from magic_cards_model_api.store import store
+
+            failed = store.fail_live_sim_claude_matches(RESTART_ERROR, self._wall(), keep=keep)
+        except Exception as exc:  # noqa: BLE001 - the sweep must not stop the lifespan
+            logger.warning("claude sim row sweep failed (%s)", type(exc).__name__)
+            return
+        if failed:
+            logger.info("claude sim sweep failed %d orphaned match row(s)", len(failed))
 
 
 def _seat_echo(settings: dict[str, tuple[str, str]]) -> dict[str, dict[str, str]]:

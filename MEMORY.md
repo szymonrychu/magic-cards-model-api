@@ -3620,3 +3620,12 @@ Retroactive audit (2026-09-26) of every change to pre-existing test content in a
   deadline) still runs `_cleanup` from the thread, because the thread may have created more after
   the winner's cleanup. `_log_lines_for(since_seq=N)` reads `records_since(N-1)` and uses row N only
   as the delta baseline: it answers the rows after N.
+- 2026-11-16 - Claude match headers persist in `sim_claude_matches` (one writer, no seat uids; a
+  restart marks live rows failed with `RESTART_ERROR` because the sweep stops their seats; 30-day
+  retention `MTG_SIM_LOG_RETENTION_S`, pruned by `reap` at most hourly; the records follow the
+  game soft-delete retention unchanged). Write-through `_persist` takes its snapshot inside a
+  manager lock so the newest state is the last write, and swallows store errors (type name logged):
+  the match runs from memory when Postgres is down. `status` and `cancel` fall back to the row
+  for a match no longer held in memory (cancel of a terminal or row-only match is a no-op that
+  answers the final status). `test_finished_result_dropped_after_ttl` changed: after the TTL the
+  status now answers from the row, so the refusal moved behind deleting the row.

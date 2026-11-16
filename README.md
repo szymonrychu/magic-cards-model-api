@@ -785,6 +785,13 @@ environment, no database and a memory cap.
   `sim_match_claude_cancel(match_id, reason=None)` stops a starting, running or stalled match
   (seats stopped, game deleted, slot freed, status `cancelled`) and answers the last 20 log lines
   as `log_tail`; a finished match answers its final status unchanged.
+  `sim_match_claude_list(limit=10)` lists recent matches (1-50, newest first) from the persisted
+  table: `match_id`, `status`, `decks`, `seats`, `started_at`, `finished_at`, `turns`, `winner`,
+  `error`; use it to find a `match_id` after a restart or a lost context. Match headers are
+  written through to Postgres and kept `MTG_SIM_LOG_RETENTION_S`, so `sim_match_claude_status`
+  and `sim_match_claude_cancel` still answer after the in-memory result is gone; a restart marks
+  every match that was still live as `failed` ("the server restarted during the match; the log
+  so far is kept").
 - Caps, all read by `sim/config.py` (`SimLimits.from_env`) from the environment of the
   `mtg-stack` pod:
 
@@ -806,6 +813,7 @@ environment, no database and a memory cap.
   | `MTG_SIM_CLAUDE_EFFORT` | low | default effort of a Claude match seat |
   | `MTG_SIM_CLAUDE_MODELS` | claude-opus-5-5, claude-opus-5, claude-sonnet-5-5, claude-sonnet-5, claude-haiku-4-5 | allowed models (comma list) |
   | `MTG_SIM_RESULT_TTL_S` | 86400 | how long finished batch and match results are kept |
+  | `MTG_SIM_LOG_RETENTION_S` | 2592000 (30 days) | how long a finished match's status, log and export stay readable |
   | `MTG_SIM_MAX_SNAPSHOTS` | 16 | snapshots per sandbox (`sim_snapshot`) |
 
 ### Preset entry (operator)

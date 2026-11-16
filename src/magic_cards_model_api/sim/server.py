@@ -402,6 +402,17 @@ def build_sim_server(
 
     @server.tool(
         description=(
+            "List recent Claude-seat matches from the persisted table, newest first (kept"
+            f" {limits.log_retention_s:g} s, env MTG_SIM_LOG_RETENTION_S): match_id, status,"
+            " decks, seats, started_at, finished_at, turns, winner and error. limit is 1-50"
+            " (default 10). Use it to find a match_id after a restart or a lost context."
+        )
+    )
+    async def sim_match_claude_list(limit: int = 10) -> dict[str, Any]:
+        return await _tool(lambda: claude.list(limit))
+
+    @server.tool(
+        description=(
             "Cancel a Claude-seat match: stops a starting, running or stalled match (both seats"
             " stopped, the game deleted, the slot freed) and keeps its log. reason (optional,"
             " up to 200 characters) is recorded in error as 'cancelled by caller: <reason>'."

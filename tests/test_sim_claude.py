@@ -153,7 +153,10 @@ def test_deadline_stops_seats_and_reports_deadline(fake_registry):
 
 
 def test_finished_result_dropped_after_ttl(fake_registry):
+    from datetime import UTC, datetime, timedelta
+
     from magic_cards_model_api.sim.manager import SimRefused
+    from magic_cards_model_api.store import store
 
     clock = Clock()
     manager = _manager(clock, MTG_SIM_RESULT_TTL_S=60)
@@ -163,6 +166,9 @@ def test_finished_result_dropped_after_ttl(fake_registry):
     assert manager.status(match_id)["result"]["winner"] == "b"
     clock.now += 61
     manager.reap()
+    assert match_id not in manager.live_ids()  # the memory copy is gone; the row answers
+    assert manager.status(match_id)["result"]["winner"] == "b"
+    store.delete_sim_claude_matches_before(datetime.now(UTC) + timedelta(days=1))
     with pytest.raises(SimRefused):
         manager.status(match_id)
 
@@ -830,3 +836,184 @@ def test_cancel_tool_is_listed_and_answers_text(fake_registry):
     assert out["status"] == "cancelled"
     assert isinstance(out["log_tail"], str)
     _assert_no_uids(out, uids)
+
+
+# -- S-69: persistence --
+
+
+def _put_row(match_id: str, status: str, started, finished=None, **kw):
+    from magic_cards_model_api.store import store
+
+    row = {
+        "match_id": match_id,
+        "game_id": None,
+        "decks": {"a": "Red", "b": "Green"},
+        "seed": 7,
+        "seats": {"a": dict(OPUS_LOW), "b": dict(OPUS_LOW)},
+        "status": status,
+        "error": None,
+        "result": None,
+        "started_at": started,
+        "finished_at": finished,
+        "last_seq": None,
+        "last_progress_at": None,
+        "stalled_reason": None,
+    }
+    row.update(kw)
+    store.put_sim_claude_match(row)
+
+
+def test_start_and_finish_write_the_row(fake_registry):
+    from magic_cards_model_api.store import store
+
+    manager = _manager()
+    out = _start(manager, RED, GREEN, seed=1)
+    mid = out["match_id"]
+    game_id = _game_id(manager, mid)
+    uids = list(store.seat_uids(game_id))
+    row = store.get_sim_claude_match(mid)
+    assert row["status"] == "running"
+    assert row["decks"] == out["decks"] and row["seed"] == 1
+    assert row["seats"] == out["seats"] and row["game_id"] == game_id
+    assert row["finished_at"] is None
+    _finish(manager, mid)
+    row = store.get_sim_claude_match(mid)
+    assert row["status"] == "done" and row["result"]["winner"] == "a"
+    assert row["finished_at"] is not None
+    text = json.dumps(row, default=str)
+    for uid in uids:
+        assert uid not in text and uid[:8] not in text
+
+
+def test_status_falls_back_to_the_row_after_the_result_ttl(fake_registry):
+    clock = Clock()
+    manager = _manager(clock, MTG_SIM_RESULT_TTL_S=100)
+    mid = _start(manager, RED, GREEN, seed=1)["match_id"]
+    _finish(manager, mid)
+    live = manager.status(mid)
+    clock.now += 101
+    manager.reap()
+    assert mid not in manager.live_ids()
+    out = manager.status(mid)
+    assert out["status"] == "done"
+    assert out["result"] == live["result"] and out["decks"] == live["decks"]
+    assert out["seats"] == live["seats"] and out["seed"] == live["seed"]
+
+
+def test_restart_marks_live_rows_failed_with_the_restart_message(fake_registry):
+    from datetime import UTC, datetime
+
+    from magic_cards_model_api.sim.claude import RESTART_ERROR
+
+    _put_row("claude-orphan-1", "running", datetime.now(UTC))
+    manager = _manager()
+    kept = _start(manager, RED, GREEN, seed=1)["match_id"]
+    manager.sweep_orphans()
+    out = manager.status("claude-orphan-1")
+    assert out["status"] == "failed" and out["error"] == RESTART_ERROR
+    assert manager.status(kept)["status"] == "running"
+    _finish(manager, kept)
+
+
+def test_app_lifespan_marks_orphaned_rows_failed(fake_registry):
+    from datetime import UTC, datetime
+
+    from fastapi.testclient import TestClient
+
+    from magic_cards_model_api.main import app
+    from magic_cards_model_api.sim.claude import RESTART_ERROR
+    from magic_cards_model_api.store import store
+
+    _put_row("claude-orphan-2", "running", datetime.now(UTC))
+    with TestClient(app):
+        row = store.get_sim_claude_match("claude-orphan-2")
+    assert row["status"] == "failed" and row["error"] == RESTART_ERROR
+
+
+def test_reap_drops_rows_past_retention(fake_registry, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    from magic_cards_model_api.store import store
+
+    now = [datetime(2026, 11, 16, 12, 0, tzinfo=UTC)]
+    clock = Clock()
+    manager = _manager(clock, wall=lambda: now[0])
+    _put_row("claude-old", "done", now[0] - timedelta(days=32), now[0] - timedelta(days=31))
+    _put_row("claude-new", "done", now[0] - timedelta(days=2), now[0] - timedelta(days=1))
+    calls = []
+    real = store.delete_sim_claude_matches_before
+    monkeypatch.setattr(
+        store, "delete_sim_claude_matches_before", lambda c: calls.append(c) or real(c)
+    )
+    manager.reap()
+    assert store.get_sim_claude_match("claude-old") is None
+    assert store.get_sim_claude_match("claude-new") is not None
+    manager.reap()
+    assert len(calls) == 1
+    clock.now += 3601
+    manager.reap()
+    assert len(calls) == 2
+
+
+def test_persist_failure_does_not_stop_the_match(fake_registry, monkeypatch, caplog):
+    from magic_cards_model_api.store import store
+
+    def down(*a, **kw):
+        raise RuntimeError("db down")
+
+    for name in (
+        "put_sim_claude_match",
+        "get_sim_claude_match",
+        "list_sim_claude_matches",
+        "fail_live_sim_claude_matches",
+        "delete_sim_claude_matches_before",
+    ):
+        monkeypatch.setattr(store, name, down)
+    manager = _manager()
+    server = _tool_server(manager)
+    with caplog.at_level("WARNING"):
+        mid = _start(manager, RED, GREEN, seed=1)["match_id"]
+        assert manager.status(mid)["status"] == "running"
+        _finish(manager, mid)
+        assert manager.status(mid)["status"] == "done"
+        manager.sweep_orphans()
+        manager.reap()
+        listed = _call_tool(server, "sim_match_claude_list")
+        assert [m["match_id"] for m in listed["matches"]] == [mid]
+        assert "error" in _call_tool(server, "sim_match_claude_status", match_id="claude-none")
+        assert "error" in _call_tool(server, "sim_match_claude_cancel", match_id="claude-none")
+    text = caplog.text
+    assert "persist failed (RuntimeError)" in text and "db down" not in text
+
+
+def test_cancel_of_a_persisted_only_match_answers_its_final_status(fake_registry):
+    from datetime import UTC, datetime
+
+    _put_row("claude-rowonly", "done", datetime.now(UTC), datetime.now(UTC), game_id=None)
+    manager = _manager()
+    out = manager.cancel("claude-rowonly", reason="late")
+    assert out["status"] == "done" and out["log_tail"] == ""
+    assert fake_registry.stopped == []
+
+
+def test_list_tool_newest_first(fake_registry):
+    from magic_cards_model_api.store import store
+
+    manager = _manager()
+    server = _tool_server(manager)
+    first = _start(manager, RED, GREEN, seed=1)["match_id"]
+    uids = list(store.seat_uids(_game_id(manager, first)))
+    _finish(manager, first)
+    second = _start(manager, RED, GREEN, seed=2)["match_id"]
+    _finish(manager, second)
+    out = _call_tool(server, "sim_match_claude_list", limit=2)
+    ids = [m["match_id"] for m in out["matches"]]
+    assert ids[:2] == [second, first]
+    entry = out["matches"][1]
+    assert entry["status"] == "done" and entry["winner"] == "a" and entry["turns"] is not None
+    assert set(entry) == {
+        "match_id", "status", "decks", "seats", "started_at", "finished_at",
+        "turns", "winner", "error",
+    }  # fmt: skip
+    _assert_no_uids(out, uids)
+    assert len(_call_tool(server, "sim_match_claude_list", limit=0)["matches"]) == 1
