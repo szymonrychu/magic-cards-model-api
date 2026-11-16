@@ -1282,3 +1282,65 @@ def test_a_failed_terminal_write_is_retried_to_the_terminal_status(fake_registry
     row = store.get_sim_claude_match(mid)
     assert row["status"] == "done" and row["result"]["winner"] == "a"
     manager.shutdown()
+
+
+# -- fix round 2: the persist queue never regresses --
+
+
+class _GatedLock:
+    """Delegates to the real lock; the first entry by the gated thread parks until released."""
+
+    def __init__(self, real, gated_thread, arrived, release):
+        self._real, self._thread = real, gated_thread
+        self._arrived, self._release = arrived, release
+        self._used = False
+
+    def __enter__(self):
+        import threading
+
+        if threading.current_thread() is self._thread and not self._used:
+            self._used = True
+            self._arrived.set()
+            assert self._release.wait(5)
+        return self._real.__enter__()
+
+    def __exit__(self, *exc):
+        return self._real.__exit__(*exc)
+
+
+def test_an_older_snapshot_never_overwrites_a_newer_terminal_one(fake_registry):
+    import threading
+
+    from magic_cards_model_api.store import store
+
+    manager = _manager()
+    mid = _start(manager, RED, GREEN, seed=1)["match_id"]
+    manager.flush_persist()
+    match = manager._matches[mid]
+    arrived, release = threading.Event(), threading.Event()
+    older = threading.Thread(target=manager._persist, args=(match,))
+    manager._wlock = _GatedLock(manager._wlock, older, arrived, release)
+    older.start()
+    assert arrived.wait(5)  # the older persist is parked at its enqueue
+    with match.lock:
+        match.status = "done"
+    manager._persist(match)  # the newer, terminal persist goes through first
+    release.set()
+    older.join(5)
+    assert manager.flush_persist()
+    assert store.get_sim_claude_match(mid)["status"] == "done"
+    with match.lock:
+        match.status = "running"  # undo the forced status so the match can end for real
+    _finish(manager, mid)
+
+
+def test_a_terminal_snapshot_is_never_replaced_by_a_live_one(fake_registry):
+    manager = _manager()
+    mid = _start(manager, RED, GREEN, seed=1)["match_id"]
+    manager.flush_persist()
+    with manager._wlock:
+        manager._pending[mid] = {"match_id": mid, "status": "failed"}
+        manager._enqueue({"match_id": mid, "status": "running"})
+        assert manager._pending[mid]["status"] == "failed"
+    manager.shutdown()
+    _finish(manager, mid)

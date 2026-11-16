@@ -453,35 +453,44 @@ class ClaudeMatchManager:
         """Queue the match header row for the background writer (write-through, eventually).
         Never blocks on the store and never raises: the match runs from memory when the store
         is down. The snapshot is taken here under the match lock (no I/O)."""
-        with match.lock:
-            row = {
-                "match_id": match.match_id,
-                "game_id": match.game_id,
-                "decks": dict(match.decks),
-                "seed": match.seed,
-                "seats": _seat_echo(match.seat_settings),
-                "status": match.status,
-                "error": match.error,
-                "result": match.result,
-                "started_at": match.started_wall,
-                "finished_at": match.finished_wall,
-                "last_seq": match.last_seq,
-                "last_progress_at": (
-                    None
-                    if match.last_progress is None
-                    else self._wall() - timedelta(seconds=self._clock() - match.last_progress)
-                ),
-                "stalled_reason": match.stalled_reason,
-            }
+        # The snapshot is taken while holding the queue lock (order: _wlock, then match.lock;
+        # nothing takes them the other way round), so snapshot order is enqueue order.
         with self._wlock:
-            self._pending[match.match_id] = row  # coalesce: the newest snapshot wins
-            self._closing = False
-            if self._writer is None:
-                self._writer = threading.Thread(
-                    target=self._write_loop, daemon=True, name="claude-sim-persist"
-                )
-                self._writer.start()
-            self._wake.notify_all()
+            with match.lock:
+                row = {
+                    "match_id": match.match_id,
+                    "game_id": match.game_id,
+                    "decks": dict(match.decks),
+                    "seed": match.seed,
+                    "seats": _seat_echo(match.seat_settings),
+                    "status": match.status,
+                    "error": match.error,
+                    "result": match.result,
+                    "started_at": match.started_wall,
+                    "finished_at": match.finished_wall,
+                    "last_seq": match.last_seq,
+                    "last_progress_at": (
+                        None
+                        if match.last_progress is None
+                        else self._wall() - timedelta(seconds=self._clock() - match.last_progress)
+                    ),
+                    "stalled_reason": match.stalled_reason,
+                }
+            self._enqueue(row)
+
+    def _enqueue(self, row: dict[str, Any]) -> None:
+        """Queue one snapshot (call with `_wlock` held): the newest wins, but a terminal
+        snapshot is never replaced by a live one."""
+        queued = self._pending.get(row["match_id"])
+        if queued is None or queued["status"] not in TERMINAL or row["status"] in TERMINAL:
+            self._pending[row["match_id"]] = row
+        self._closing = False
+        if self._writer is None:
+            self._writer = threading.Thread(
+                target=self._write_loop, daemon=True, name="claude-sim-persist"
+            )
+            self._writer.start()
+        self._wake.notify_all()
 
     def _write_loop(self) -> None:
         """The one writer of match rows: drains the pending snapshots outside every manager
