@@ -3599,3 +3599,9 @@ Retroactive audit (2026-09-26) of every change to pre-existing test content in a
   a default change cannot silently turn the wait tool's heartbeats off. Proven by
   `test_progress_notifications_stream_over_the_sim_mount`; Step 2 outcome: the test already PASSED
   before the explicit flag (2.1.1 defaults to SSE), so the flag is a pin, not a fix.
+- 2026-11-16 - `sim/gamelog.py` (compact-v1 projection, pure): the ledger records blocks as action
+  `declare_blockers` with detail key `blocks` (app.py `action_declare_blockers`), so both `block`
+  and `declare_blockers` print the verb `block`. `LogLine.end_seq` is the last seq a collapsed
+  pass run covers, so a pager resumes at `end_seq or seq` with no overlap. `head_tail` caps the
+  kept head at three quarters of the budget so the newest lines always fit. Shared ledger
+  fixtures live in `tests/sim_claude_kit.py` (test modules cannot import each other's helpers).
