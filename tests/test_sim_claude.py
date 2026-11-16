@@ -677,3 +677,156 @@ def test_start_tool_takes_model_effort_and_seat_overrides(fake_registry):
     assert out["seats"]["b"] == {"model": "claude-opus-5-5", "effort": "high"}
     _wait(manager, out["match_id"])
     _finish(manager, out["match_id"])
+
+
+# -- S-69: shared finish path and cancel --
+
+
+def _matches_count(status: str) -> float:
+    from magic_cards_model_api.match_metrics import REGISTRY
+
+    value = REGISTRY.get_sample_value("mtg_sim_claude_matches_total", {"status": status})
+    return value or 0.0
+
+
+def test_cancel_running_match_stops_seats_and_keeps_the_log(fake_registry):
+    from magic_cards_model_api import audit
+    from magic_cards_model_api.store import store
+
+    manager = _manager()
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    game_id = _game_id(manager, match_id)
+    uids = set(store.seat_uids(game_id))
+    audit.record(game_id, "pass_priority", player="a", reasoning="hold")
+    out = manager.cancel(match_id, reason="hung on Emrakul")
+    assert out["status"] == "cancelled"
+    assert out["error"] == "cancelled by caller: hung on Emrakul"
+    assert "a pass" in out["log_tail"]
+    assert sorted(fake_registry.stopped) == sorted(uids)
+    assert store.get(game_id) is None
+    assert any(r["payload"]["action"] == "pass_priority" for r in store.records(game_id))
+    again = _start(manager, RED, GREEN, seed=2)  # the slot is free
+    _finish(manager, again["match_id"])
+
+
+def test_cancel_reason_is_ascii_collapsed_and_trimmed(fake_registry):
+    manager = _manager()
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    out = manager.cancel(match_id, reason="  caf" + chr(0xE9) + " \n\t stuck " + "x" * 300)
+    assert out["error"].startswith("cancelled by caller: cafe stuck x")
+    assert len(out["error"]) == len("cancelled by caller: ") + 200
+    other = _start(manager, RED, GREEN, seed=2)["match_id"]
+    assert manager.cancel(other)["error"] == "cancelled by caller"
+
+
+def test_cancel_while_starting_is_honoured_by_the_start_thread(fake_registry, monkeypatch):
+    import threading
+
+    from magic_cards_model_api.store import store
+
+    gate = threading.Event()
+    _gated_boot(monkeypatch, gate)
+    manager = _manager()
+    match_id = manager.start(RED, GREEN, seed=1)["match_id"]
+    out = manager.cancel(match_id)
+    assert out["status"] == "cancelled"
+    assert out["log_tail"] == ""
+    gate.set()
+    _wait(manager, match_id)
+    assert manager.status(match_id)["status"] == "cancelled"
+    game_id = _game_id(manager, match_id)
+    assert game_id is not None and store.get(game_id) is None
+    assert fake_registry.started == []
+
+
+def test_cancel_terminal_match_is_a_noop(fake_registry):
+    manager = _manager()
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    _finish(manager, match_id)
+    stopped = len(fake_registry.stopped)
+    before = manager.status(match_id)
+    out = manager.cancel(match_id, reason="too late")
+    assert out["status"] == "done"
+    assert out.get("error") == before.get("error")
+    assert len(fake_registry.stopped) == stopped
+
+
+def test_cancel_unknown_match_refused(fake_registry):
+    from magic_cards_model_api.sim.manager import SimRefused
+
+    with pytest.raises(SimRefused, match="No Claude match"):
+        _manager().cancel("claude-nope")
+
+
+@pytest.mark.parametrize(
+    ("path", "status"),
+    [("done", "done"), ("deadline", "deadline"), ("dead", "failed"), ("cancel", "cancelled")],
+)
+def test_every_terminal_path_sets_ended_and_counts_once(fake_registry, path, status):
+    clock = Clock()
+    manager = _manager(clock, MTG_SIM_CLAUDE_DEADLINE_S=600)
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    match = manager._matches[match_id]
+    assert not match.ended.is_set()
+    before = _matches_count(status)
+    if path == "done":
+        _end_game(_game_id(manager, match_id), "b")
+        manager.reap()
+    elif path == "deadline":
+        clock.now += 601
+        manager.reap()
+    elif path == "dead":
+        fake_registry.state = "gone"
+        manager.reap()
+    else:
+        manager.cancel(match_id)
+    assert manager.status(match_id)["status"] == status
+    assert match.ended.is_set()
+    assert _matches_count(status) == before + 1
+    manager.reap()
+    manager.cancel(match_id)
+    assert _matches_count(status) == before + 1
+
+
+def test_cancel_racing_the_reaper_claims_once(fake_registry):
+    import threading
+
+    from magic_cards_model_api.store import store
+
+    manager = _manager()
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    game_id = _game_id(manager, match_id)
+    uids = list(store.seat_uids(game_id))
+    before = _matches_count("done") + _matches_count("cancelled")
+    _end_game(game_id, "b")
+    barrier = threading.Barrier(2)
+
+    def run(call):
+        barrier.wait(10)
+        call()
+
+    threads = [
+        threading.Thread(target=run, args=(manager.reap,)),
+        threading.Thread(target=run, args=(lambda: manager.cancel(match_id),)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(30)
+    assert manager.status(match_id)["status"] in {"done", "cancelled"}
+    assert _matches_count("done") + _matches_count("cancelled") == before + 1
+    assert sorted(fake_registry.stopped) == sorted(uids)
+
+
+def test_cancel_tool_is_listed_and_answers_text(fake_registry):
+    from magic_cards_model_api.store import store
+
+    manager = _manager()
+    server = _tool_server(manager)
+    assert "error" in _call_tool(server, "sim_match_claude_cancel", match_id="claude-nope")
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    uids = list(store.seat_uids(_game_id(manager, match_id)))
+    out = _call_tool(server, "sim_match_claude_cancel", match_id=match_id, reason="stop")
+    assert out["status"] == "cancelled"
+    assert isinstance(out["log_tail"], str)
+    _assert_no_uids(out, uids)

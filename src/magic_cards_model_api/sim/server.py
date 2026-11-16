@@ -402,6 +402,18 @@ def build_sim_server(
 
     @server.tool(
         description=(
+            "Cancel a Claude-seat match: stops a starting, running or stalled match (both seats"
+            " stopped, the game deleted, the slot freed) and keeps its log. reason (optional,"
+            " up to 200 characters) is recorded in error as 'cancelled by caller: <reason>'."
+            " Answers like sim_match_claude_status plus log_tail (the last 20 compact log"
+            " lines). A finished match answers its final status unchanged."
+        )
+    )
+    async def sim_match_claude_cancel(match_id: str, reason: str | None = None) -> dict[str, Any]:
+        return await _tool(lambda: claude.cancel(match_id, reason))
+
+    @server.tool(
+        description=(
             f"Check up to {MAX_LOOKUP_NAMES} card names (read from a photo or a chat) before"
             " building a board. Each resolves through Scryfall (exact, then fuzzy, so loose"
             " spellings work) and comes back as {query, status: found | fuzzy, exact, name,"

@@ -3612,3 +3612,11 @@ Retroactive audit (2026-09-26) of every change to pre-existing test content in a
   `fail_live_sim_claude_matches` is one status-guarded UPDATE ... RETURNING. The postgres params
   of `tests/test_sim_match_rows.py` and `test_head_creates_sim_claude_matches` only run under
   `mise run test:pg` (no Docker in the agent pod).
+- 2026-11-16 - Every terminal transition of a Claude-seat match goes through
+  `ClaudeMatchManager._finish` (status-guarded claim under `match.lock`, `ended` event,
+  `mtg_sim_claude_matches_total{status}`, one cleanup outside the lock), so a cancel racing the
+  reaper stops each seat once. `_result_of` reads the game before the claim (no I/O under the lock);
+  a losing caller pays one wasted read. A start that the start thread loses (cancelled or start
+  deadline) still runs `_cleanup` from the thread, because the thread may have created more after
+  the winner's cleanup. `_log_lines_for(since_seq=N)` reads `records_since(N-1)` and uses row N only
+  as the delta baseline: it answers the rows after N.

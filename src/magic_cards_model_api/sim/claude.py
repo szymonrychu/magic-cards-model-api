@@ -10,7 +10,13 @@ the slot. A match is bounded by `claude_deadline_s` (the seat Job deadline), not
 engine-only batch cap. On game over, at the deadline or on failure the seats are stopped and the
 game is deleted; the result is kept `result_ttl_s`. A start that has not finished
 `START_DEADLINE_S` after the call fails and frees the slot; a start thread that finishes later
-cleans up what it created.
+cleans up what it created. `cancel` stops a live match the same way (status `cancelled`) and keeps
+its log.
+
+Every terminal transition (done, deadline, failed, cancelled) goes through `_finish`: one
+status-guarded claim under the match lock, the `ended` event, one count on
+`mtg_sim_claude_matches_total{status}` and one cleanup, so a racing cancel and reaper pass
+stop the seats exactly once.
 
 `status` answers from cached match state only: no cluster read, no lock held across I/O, so a
 poll stays under MTG_SIM_CALL_TIMEOUT_S whatever the cluster does. The reaper (every 30 s) reads
@@ -29,13 +35,19 @@ import random
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 from typing import Any, get_args
+from uuid import UUID
+
+from prometheus_client import Counter, Gauge
 
 from magic_cards_model_api import ai_seat
 from magic_cards_model_api.agent_settings import Effort
+from magic_cards_model_api.match_metrics import REGISTRY
+from magic_cards_model_api.sim import gamelog
 from magic_cards_model_api.sim.config import SimLimits
+from magic_cards_model_api.sim.gamelog import TAIL_LINES, LogFilter, LogLine
 from magic_cards_model_api.sim.manager import SimRefused
 from magic_cards_model_api.sim.match import checked_support, resolve_deck
 from magic_cards_model_api.sim.redact import redact, support_unknown
@@ -50,11 +62,30 @@ _SEATS = ("a", "b")
 _PREFIX_LEN = 8  # k8s Job names carry `uid[:8]` (`k8s_seats.job_name`)
 #: `K8sSeats.status` states in which nothing plays the seat any more.
 _DEAD_STATES = frozenset({"gone", "error"})
-_ACTIVE = ("starting", "running")
+#: Statuses that hold the match slot; every other status is in `TERMINAL`.
+_LIVE = ("starting", "running", "stalled")
+TERMINAL = frozenset({"done", "deadline", "failed", "cancelled"})
+_REASON_MAX = 200
 _EFFORTS = get_args(Effort)
 #: A start (boot with cold card resolution, two seat Job creates) that has not finished after
 #: this long is failed by the reaper and its slot freed; a healthy start takes seconds.
 START_DEADLINE_S = 300.0
+
+MATCHES = Counter(
+    "mtg_sim_claude_matches",
+    "Claude-seat sim matches by final status",
+    ["status"],
+    registry=REGISTRY,
+)
+STALL_SECONDS = Gauge(
+    "mtg_sim_claude_stall_seconds",
+    "Seconds without a new record of the longest-stalled live Claude match (0 when none)",
+    registry=REGISTRY,
+)
+
+
+def _count(status: str) -> None:
+    MATCHES.labels(status=status).inc()
 
 
 @dataclass
@@ -77,6 +108,7 @@ class _ClaudeMatch:
     finished: float | None = None
     support: dict[str, Any] = field(default_factory=lambda: support_unknown("pending"))
     lock: threading.Lock = field(default_factory=threading.Lock)
+    ended: threading.Event = field(default_factory=threading.Event)  # set on the terminal claim
 
     def secrets(self) -> list[str]:
         return [s for uid in self.uids.values() for s in (uid, uid[:_PREFIX_LEN])]
@@ -126,7 +158,7 @@ class ClaudeMatchManager:
             settings,
         )
         with self._lock:
-            active = [m for m in self._matches.values() if m.status in _ACTIVE]
+            active = [m for m in self._matches.values() if m.status in _LIVE]
             if len(active) >= self._limits.max_claude_matches:
                 oldest = min(active, key=lambda m: m.started)
                 minutes = int((self._clock() - oldest.started) // 60)
@@ -201,17 +233,15 @@ class ClaudeMatchManager:
         except BaseException as exc:  # noqa: BLE001 - a crashed start must free the slot
             logger.warning("claude sim match start failed (%s)", type(exc).__name__)
             error = f"The match could not be started ({type(exc).__name__}). Try again."
-        with match.lock:
-            claimed = match.status == "starting"
-            if claimed and error is None:
-                match.status = "running"
-                return
-            if claimed:
-                match.error = error
-                match.status = "failed"
-                match.finished = self._clock()
-        # Failed here, or already failed by the start deadline while this thread hung: clean
-        # up everything it created (it may have created more after the deadline cleanup).
+        if error is None:
+            with match.lock:
+                if match.status == "starting":
+                    match.status = "running"
+                    return
+        elif self._finish(match, "failed", error, expect=("starting",)):
+            return
+        # Already failed by the start deadline or cancelled while this thread ran: clean up
+        # everything it created (it may have created more after that cleanup).
         self._cleanup(match)
 
     def _boot(self, match: _ClaudeMatch, texts: tuple[str, str]) -> str | None:
@@ -277,8 +307,7 @@ class ClaudeMatchManager:
     def _compute_support(match: _ClaudeMatch, text_a: str, text_b: str) -> None:
         match.support = checked_support(text_a, text_b)
 
-    def status(self, match_id: str) -> dict[str, Any]:
-        """The match as the reaper last saw it; no cluster I/O, no lock held across I/O."""
+    def _get(self, match_id: str) -> _ClaudeMatch:
         with self._lock:
             match = self._matches.get(match_id)
         if match is None:
@@ -286,7 +315,119 @@ class ClaudeMatchManager:
                 f"No Claude match {match_id}; finished results are kept"
                 f" {self._limits.result_ttl_s:g} s. Start one with sim_match_claude_start."
             )
-        return self._answer(match)
+        return match
+
+    def status(self, match_id: str) -> dict[str, Any]:
+        """The match as the reaper last saw it; no cluster I/O, no lock held across I/O."""
+        return self._answer(self._get(match_id))
+
+    def cancel(self, match_id: str, reason: str | None = None) -> dict[str, Any]:
+        """Stop a starting, running or stalled match: seats stopped, game deleted, slot freed,
+        log kept. A terminal match answers its final status unchanged."""
+        match = self._get(match_id)
+        error = "cancelled by caller"
+        text = " ".join(gamelog.ascii_text(reason or "").split())[:_REASON_MAX]
+        if text:
+            error = f"{error}: {text}"
+        self._finish(match, "cancelled", error)
+        with match.lock:
+            game_id = match.game_id
+        lines = self._log_lines_for(game_id, match.secrets(), LogFilter())
+        return {**self._answer(match), "log_tail": gamelog.render(lines[-TAIL_LINES:])}
+
+    def _finish(
+        self,
+        match: _ClaudeMatch,
+        status: str,
+        error: str | None,
+        *,
+        expect: Collection[str] = _LIVE,
+        cleanup: bool = True,
+    ) -> bool:
+        """The one terminal transition: claim it only from a status in `expect`, set the
+        result, `ended` and the metric, then clean up outside the lock. Returns whether this
+        call claimed it (a racing caller that lost does nothing)."""
+        result = self._result_of(match)
+        with match.lock:
+            if match.status not in expect:
+                return False
+            match.status, match.error, match.finished = status, error, self._clock()
+            if result is not None:
+                match.result = result
+            match.ended.set()
+        _count(status)
+        if cleanup:
+            self._cleanup(match)
+        return True
+
+    def _result_of(self, match: _ClaudeMatch) -> dict[str, Any] | None:
+        """Winner, drawn, turns and the last log lines of the match's game, or `None` when
+        the game is not readable (not booted, gone or unloadable). Call without the lock."""
+        from magic_cards_model_api.store import store
+
+        with match.lock:
+            game_id = match.game_id
+        if game_id is None:
+            return None
+        try:
+            game = store.get(game_id)
+        except Exception as exc:  # noqa: BLE001 - GameUnloadable or a read failure: no result
+            logger.warning("claude sim result read failed (%s)", type(exc).__name__)
+            return None
+        if game is None:
+            return None
+        turn = game.turn
+        return {
+            "winner": game.winner if game.winner in _SEATS else None,
+            "drawn": bool(game.drawn),
+            "turns": turn.turn_number if turn is not None else None,
+            "last_log": self._last_log(game_id),
+        }
+
+    @staticmethod
+    def _log_lines_for(
+        game_id: str | None, secrets: list[str], flt: LogFilter, since_seq: int = 0
+    ) -> list[LogLine]:
+        """The compact-v1 lines of a game's ledger, live or deleted, secrets scrubbed.
+
+        `since_seq > 0` projects only the rows after `since_seq` (that row itself is read as
+        the delta baseline). `[]` when there is no game or the read fails.
+        """
+        from magic_cards_model_api.store import store
+
+        if game_id is None:
+            return []
+        try:
+            baseline = None
+            if since_seq > 0:
+                rows = store.records_since(game_id, since_seq - 1)
+                if rows:
+                    baseline = rows[0]["payload"].get("snapshot")
+                    rows = rows[1:]
+            else:
+                rows = store.records(game_id)
+            game = store.get(game_id)
+            if game is None:
+                archived = store.archived(game_id)
+                game = archived.game if archived is not None else None
+        except Exception as exc:  # noqa: BLE001 - the answer stands without its log
+            logger.warning("claude sim log read failed (%s)", type(exc).__name__)
+            return []
+
+        def names(value: str) -> str | None:
+            try:
+                found = game.find_by_id(UUID(value)) if game is not None else None
+            except Exception:  # noqa: BLE001 - not a card id of this game
+                return None
+            return getattr(found, "name", None)
+
+        def scrub(text: str) -> str:
+            for secret in secrets:
+                if secret:
+                    text = text.replace(secret, "<redacted>")
+            return text
+
+        return gamelog.project(rows, names, flt, baseline=baseline, scrub=scrub)
 
     def _advance(self, match: _ClaudeMatch) -> None:
         """The reaper's pass over one match: read seats and game, apply the transitions.
@@ -298,23 +439,24 @@ class ClaudeMatchManager:
         from magic_cards_model_api.store import store
 
         with match.lock:
-            start_timed_out = False
             if match.status == "starting":
                 if self._clock() - match.started < self._start_deadline_s():
                     return
                 start_timed_out = True
-                match.error = (
-                    f"The match did not finish starting within {self._start_deadline_s():g} s"
-                    " (card resolution or the seat Jobs hung), so it stopped. Try again."
-                )
-                match.status = "failed"
-                match.finished = self._clock()
             elif match.status != "running":
                 return
             else:
+                start_timed_out = False
                 uids, game_id = dict(match.uids), match.game_id
         if start_timed_out:
-            self._cleanup(match)  # what the start created so far; its thread cleans up the rest
+            # Cleans up what the start created so far; its thread cleans up the rest.
+            self._finish(
+                match,
+                "failed",
+                f"The match did not finish starting within {self._start_deadline_s():g} s"
+                " (card resolution or the seat Jobs hung), so it stopped. Try again.",
+                expect=("starting",),
+            )
             return
         states = {seat: _seat_state(uid) for seat, uid in uids.items()}
         try:
@@ -336,7 +478,6 @@ class ClaudeMatchManager:
                 "Both seats stopped (gone or error) before the game ended, so the match"
                 " stopped; the result is the game so far."
             )
-        last_log = self._last_log(game_id) if status is not None and game is not None else []
         with match.lock:
             if match.status != "running":
                 return
@@ -344,19 +485,8 @@ class ClaudeMatchManager:
             if game is not None:
                 match.turn = turn.turn_number if turn is not None else None
                 match.step = str(turn.step) if turn is not None else None
-            if status is None:
-                return
-            if game is not None:
-                match.result = {
-                    "winner": game.winner if game.winner in _SEATS else None,
-                    "drawn": bool(game.drawn),
-                    "turns": match.turn,
-                    "last_log": last_log,
-                }
-            match.error = error
-            match.status = status
-            match.finished = self._clock()
-        self._cleanup(match)
+        if status is not None:
+            self._finish(match, status, error)
 
     def _start_deadline_s(self) -> float:
         return min(START_DEADLINE_S, self._limits.claude_deadline_s)
@@ -407,7 +537,7 @@ class ClaudeMatchManager:
             "seats": seats,
             **match.support,
         }
-        if status in _ACTIVE:
+        if status in _LIVE:
             out["poll_every_s"] = POLL_EVERY_S
         if status == "running":
             # Seat states, turn and step are the reaper's last read (every 30 s).
@@ -450,7 +580,7 @@ class ClaudeMatchManager:
         from magic_cards_model_api.store import store
 
         with self._lock:
-            tracked = {m.game_id for m in self._matches.values() if m.status in _ACTIVE}
+            tracked = {m.game_id for m in self._matches.values() if m.status in _LIVE}
         swept: list[str] = []
         for game_id in store.ids():
             if game_id in tracked:
