@@ -8,10 +8,10 @@ then and `failed` if they fail. The lobby's pregame backstop (`ai_pregame`) watc
 a match whose seats are both gone or in error fails on the next reaper pass instead of holding
 the slot. A match is bounded by `claude_deadline_s` (the seat Job deadline), not by the
 engine-only batch cap. On game over, at the deadline or on failure the seats are stopped and the
-game is deleted; the result is kept `result_ttl_s`. A start that has not finished
-`START_DEADLINE_S` after the call fails and frees the slot; a start thread that finishes later
-cleans up what it created. `cancel` stops a live match the same way (status `cancelled`) and keeps
-its log.
+game is deleted; the result is kept `result_ttl_s` in memory and `log_retention_s` as a row. A
+start that has not finished `START_DEADLINE_S` after the call fails and frees the slot; a start
+thread that finishes later cleans up what it created. `cancel` stops a live match the same way
+(status `cancelled`) and keeps its log.
 
 Every terminal transition (done, deadline, failed, cancelled) goes through `_finish`: one
 status-guarded claim under the match lock, the `ended` event, one count on
@@ -22,6 +22,10 @@ stop the seats exactly once.
 poll stays under MTG_SIM_CALL_TIMEOUT_S whatever the cluster does. The reaper (every 30 s) reads
 the seats and the game and applies the transitions; it claims a transition under the match lock
 and runs the cleanup I/O after releasing it.
+
+Match rows are written by one background writer thread that coalesces the newest snapshot per
+match and retries a failed write on its next pass; no tool call or reaper pass waits on the
+database to write (reads stay direct).
 
 Seat uids are credentials: no answer carries one (or the Job names that embed their prefix) and
 nothing here logs one.
@@ -138,7 +142,16 @@ class ClaudeMatchManager:
         self._limits = limits
         self._clock = clock
         self._wall = wall
-        self._persist_lock = threading.Lock()  # orders the row writes of one manager
+        # Row writes go through one background writer (see `_persist`): callers never
+        # block on the database.
+        self._wlock = threading.Lock()
+        self._wake = threading.Condition(self._wlock)  # new snapshot, or shutdown
+        self._idle = threading.Condition(self._wlock)  # writer drained (flush_persist)
+        self._pending: dict[str, dict[str, Any]] = {}  # newest unwritten snapshot per match
+        self._writing = False
+        self._writer: threading.Thread | None = None
+        self._closing = False
+        self._persist_retry_s = 5.0
         self._last_retention: float | None = None
         self._lock = threading.Lock()
         self._matches: dict[str, _ClaudeMatch] = {}
@@ -437,37 +450,93 @@ class ClaudeMatchManager:
             return None
 
     def _persist(self, match: _ClaudeMatch) -> None:
-        """Write the match header row (write-through). Never raises: the match runs from
-        memory when the store is down. The snapshot is taken inside `_persist_lock`, so the
-        newest state is the last write."""
+        """Queue the match header row for the background writer (write-through, eventually).
+        Never blocks on the store and never raises: the match runs from memory when the store
+        is down. The snapshot is taken here under the match lock (no I/O)."""
+        with match.lock:
+            row = {
+                "match_id": match.match_id,
+                "game_id": match.game_id,
+                "decks": dict(match.decks),
+                "seed": match.seed,
+                "seats": _seat_echo(match.seat_settings),
+                "status": match.status,
+                "error": match.error,
+                "result": match.result,
+                "started_at": match.started_wall,
+                "finished_at": match.finished_wall,
+                "last_seq": match.last_seq,
+                "last_progress_at": (
+                    None
+                    if match.last_progress is None
+                    else self._wall() - timedelta(seconds=self._clock() - match.last_progress)
+                ),
+                "stalled_reason": match.stalled_reason,
+            }
+        with self._wlock:
+            self._pending[match.match_id] = row  # coalesce: the newest snapshot wins
+            self._closing = False
+            if self._writer is None:
+                self._writer = threading.Thread(
+                    target=self._write_loop, daemon=True, name="claude-sim-persist"
+                )
+                self._writer.start()
+            self._wake.notify_all()
+
+    def _write_loop(self) -> None:
+        """The one writer of match rows: drains the pending snapshots outside every manager
+        and match lock. A failed write keeps its snapshot (unless a newer one arrived) and is
+        retried on the next pass; the thread exits when nothing is pending."""
         from magic_cards_model_api.store import store
 
-        try:
-            with self._persist_lock:
-                with match.lock:
-                    row = {
-                        "match_id": match.match_id,
-                        "game_id": match.game_id,
-                        "decks": dict(match.decks),
-                        "seed": match.seed,
-                        "seats": _seat_echo(match.seat_settings),
-                        "status": match.status,
-                        "error": match.error,
-                        "result": match.result,
-                        "started_at": match.started_wall,
-                        "finished_at": match.finished_wall,
-                        "last_seq": match.last_seq,
-                        "last_progress_at": (
-                            None
-                            if match.last_progress is None
-                            else self._wall()
-                            - timedelta(seconds=self._clock() - match.last_progress)
-                        ),
-                        "stalled_reason": match.stalled_reason,
-                    }
-                store.put_sim_claude_match(row)
-        except Exception as exc:  # noqa: BLE001 - persistence must never stop a match
-            logger.warning("claude sim match persist failed (%s)", type(exc).__name__)
+        while True:
+            with self._wlock:
+                if not self._pending or self._closing:
+                    self._writer = None
+                    self._idle.notify_all()
+                    return
+                batch, self._pending = self._pending, {}
+                self._writing = True
+            failed: dict[str, dict[str, Any]] = {}
+            for match_id, row in batch.items():
+                try:
+                    store.put_sim_claude_match(row)
+                except Exception as exc:  # noqa: BLE001 - persistence must never stop a match
+                    logger.warning("claude sim match persist failed (%s)", type(exc).__name__)
+                    failed[match_id] = row
+            with self._wlock:
+                self._writing = False
+                for match_id, row in failed.items():
+                    self._pending.setdefault(match_id, row)  # keep, unless superseded
+                if not self._pending:
+                    self._writer = None
+                    self._idle.notify_all()
+                    return
+                self._idle.notify_all()
+                if failed and not self._closing:
+                    self._wake.wait(self._persist_retry_s)
+
+    def flush_persist(self, timeout: float = 5.0) -> bool:
+        """Wait until every queued row is written; True when drained, False on timeout."""
+        deadline = time.monotonic() + timeout
+        with self._wlock:
+            while self._pending or self._writing:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    return False
+                self._idle.wait(left)
+        return True
+
+    def shutdown(self, timeout: float = 5.0) -> None:
+        """Flush the queued rows (bounded) and stop the writer; a later persist restarts it."""
+        self.flush_persist(timeout)
+        with self._wlock:
+            self._closing = True
+            self._pending.clear()
+            writer = self._writer
+            self._wake.notify_all()
+        if writer is not None:
+            writer.join(timeout=timeout)
 
     def _answer_from_row(self, row: dict[str, Any]) -> dict[str, Any]:
         """`_answer` for a match this process does not hold: the persisted header."""
@@ -516,9 +585,9 @@ class ClaudeMatchManager:
                 match.result = result
             match.ended.set()
         _count(status)
-        self._persist(match)
         if cleanup:
-            self._cleanup(match)
+            self._cleanup(match)  # before the row write: seats and game never wait on the store
+        self._persist(match)
         return True
 
     def _result_of(self, match: _ClaudeMatch) -> dict[str, Any] | None:

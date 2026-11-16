@@ -3636,3 +3636,12 @@ Retroactive audit (2026-09-26) of every change to pre-existing test content in a
   first seq read only sets the baseline (`last_seq`); `last_progress` starts when the match
   becomes `running`. Terminal checks (game gone, over, deadline, dead seats) run before the
   stall checks. The stall gauge is set on every `reap` from the stalled matches.
+- 2026-11-16 (S-69, T-551): Claude-match row writes go through one background writer thread
+  (review I1/I2, controller ruling). `_persist` only snapshots under the match lock and enqueues
+  (newest snapshot per match_id wins); the writer writes outside every lock, logs failures by
+  exception type, keeps a failed snapshot and retries it on its next pass (5 s), and exits when
+  nothing is pending (restarted by the next enqueue). Why: a hung Postgres must not delay a tool
+  answer, the seat stop/game delete or the reaper. `_finish` now cleans up before enqueueing the
+  terminal row. `flush_persist(timeout)` is the deterministic test hook; `shutdown()` flushes
+  (bounded) and stops it, called from the app lifespan. Reads (list, status/cancel of an unheld
+  id) stay direct: the records ledger shares the DB, so a hung DB already stops the game.

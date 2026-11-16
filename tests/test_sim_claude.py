@@ -166,6 +166,7 @@ def test_finished_result_dropped_after_ttl(fake_registry):
     assert manager.status(match_id)["result"]["winner"] == "b"
     clock.now += 61
     manager.reap()
+    manager.flush_persist()
     assert match_id not in manager.live_ids()  # the memory copy is gone; the row answers
     assert manager.status(match_id)["result"]["winner"] == "b"
     store.delete_sim_claude_matches_before(datetime.now(UTC) + timedelta(days=1))
@@ -871,12 +872,14 @@ def test_start_and_finish_write_the_row(fake_registry):
     mid = out["match_id"]
     game_id = _game_id(manager, mid)
     uids = list(store.seat_uids(game_id))
+    manager.flush_persist()
     row = store.get_sim_claude_match(mid)
     assert row["status"] == "running"
     assert row["decks"] == out["decks"] and row["seed"] == 1
     assert row["seats"] == out["seats"] and row["game_id"] == game_id
     assert row["finished_at"] is None
     _finish(manager, mid)
+    manager.flush_persist()
     row = store.get_sim_claude_match(mid)
     assert row["status"] == "done" and row["result"]["winner"] == "a"
     assert row["finished_at"] is not None
@@ -893,6 +896,7 @@ def test_status_falls_back_to_the_row_after_the_result_ttl(fake_registry):
     live = manager.status(mid)
     clock.now += 101
     manager.reap()
+    manager.flush_persist()
     assert mid not in manager.live_ids()
     out = manager.status(mid)
     assert out["status"] == "done"
@@ -970,11 +974,13 @@ def test_persist_failure_does_not_stop_the_match(fake_registry, monkeypatch, cap
     ):
         monkeypatch.setattr(store, name, down)
     manager = _manager()
+    manager._persist_retry_s = 0.01
     server = _tool_server(manager)
     with caplog.at_level("WARNING"):
         mid = _start(manager, RED, GREEN, seed=1)["match_id"]
         assert manager.status(mid)["status"] == "running"
         _finish(manager, mid)
+        assert not manager.flush_persist(0.3)  # the store is down: the snapshot is kept
         assert manager.status(mid)["status"] == "done"
         manager.sweep_orphans()
         manager.reap()
@@ -982,6 +988,7 @@ def test_persist_failure_does_not_stop_the_match(fake_registry, monkeypatch, cap
         assert [m["match_id"] for m in listed["matches"]] == [mid]
         assert "error" in _call_tool(server, "sim_match_claude_status", match_id="claude-none")
         assert "error" in _call_tool(server, "sim_match_claude_cancel", match_id="claude-none")
+    manager.shutdown(0.3)  # drop the undeliverable snapshot before the store comes back
     text = caplog.text
     assert "persist failed (RuntimeError)" in text and "db down" not in text
 
@@ -1053,10 +1060,10 @@ def test_no_new_record_for_the_stall_window_marks_stalled_with_a_reason(fake_reg
     assert answer["last_progress_s_ago"] == 901.0
     with pytest.raises(Exception, match="(?i)claude match"):
         manager.start(RED, GREEN, seed=2)
+    manager.flush_persist()
     assert store.get_sim_claude_match(match_id)["status"] == "stalled"
     assert store.get_sim_claude_match(match_id)["stalled_reason"] == answer["stalled_reason"]
     _finish(manager, match_id)
-
 
 
 def test_reason_names_the_pending_decision(fake_registry, monkeypatch):
@@ -1078,7 +1085,6 @@ def test_reason_names_the_pending_decision(fake_registry, monkeypatch):
     _finish(manager, match_id)
 
 
-
 def test_new_record_returns_a_stalled_match_to_running(fake_registry):
     from magic_cards_model_api import audit
     from magic_cards_model_api.store import store
@@ -1094,10 +1100,10 @@ def test_new_record_returns_a_stalled_match_to_running(fake_registry):
     assert "stalled_reason" not in answer
     assert answer["last_seq"] == seq
     assert answer["last_progress_s_ago"] == 0.0
+    manager.flush_persist()
     assert store.get_sim_claude_match(match_id)["status"] == "running"
     assert store.get_sim_claude_match(match_id)["last_seq"] == seq
     _finish(manager, match_id)
-
 
 
 def test_stall_abort_fails_the_match_and_frees_the_slot(fake_registry):
@@ -1167,7 +1173,6 @@ def test_stall_gauge_tracks_the_stalled_match(fake_registry):
     _finish(manager, match_id)
 
 
-
 def test_game_over_wins_over_stall(fake_registry):
     clock, manager, match_id = _stalled_manager()
     clock.now += 901
@@ -1177,3 +1182,66 @@ def test_game_over_wins_over_stall(fake_registry):
     manager.reap()
     assert manager.status(match_id)["status"] == "done"
     assert _stall_gauge() == 0
+
+
+def test_a_hung_store_write_delays_neither_cleanup_nor_the_answers(fake_registry, monkeypatch):
+    import threading
+
+    from magic_cards_model_api.store import store
+
+    release = threading.Event()
+    entered = threading.Event()
+    real = store.put_sim_claude_match
+
+    def hang(row):
+        entered.set()
+        release.wait(10)
+        return real(row)
+
+    manager = _manager()
+    mid = _start(manager, RED, GREEN, seed=1)["match_id"]
+    manager.flush_persist()
+    game_id = _game_id(manager, mid)
+    monkeypatch.setattr(store, "put_sim_claude_match", hang)
+    try:
+        out = manager.cancel(mid, "enough")  # persists the terminal row, which now hangs
+        assert entered.wait(2)
+        assert out["status"] == "cancelled"
+        assert len(fake_registry.stopped) == 2
+        assert store.get(game_id) is None
+        assert manager._find(mid).ended.is_set()
+        assert manager.status(mid)["status"] == "cancelled"
+        assert not manager.flush_persist(0.1)  # still stuck in the write
+        second = _start(manager, GREEN, RED, seed=2)  # the slot is free; start answers at once
+        assert second["status"] == "starting"
+        manager.cancel(second["match_id"])
+    finally:
+        release.set()
+    assert manager.flush_persist(5)
+    assert store.get_sim_claude_match(mid)["status"] == "cancelled"
+    manager.shutdown()
+
+
+def test_a_failed_terminal_write_is_retried_to_the_terminal_status(fake_registry, monkeypatch):
+    from magic_cards_model_api.store import store
+
+    real = store.put_sim_claude_match
+    failures = []
+
+    def flaky(row):
+        if row["status"] == "done" and len(failures) < 2:
+            failures.append(1)
+            raise RuntimeError("db down")
+        return real(row)
+
+    manager = _manager()
+    manager._persist_retry_s = 0.01
+    mid = _start(manager, RED, GREEN, seed=1)["match_id"]
+    manager.flush_persist()
+    monkeypatch.setattr(store, "put_sim_claude_match", flaky)
+    _finish(manager, mid)
+    assert manager.flush_persist(5)
+    assert len(failures) == 2
+    row = store.get_sim_claude_match(mid)
+    assert row["status"] == "done" and row["result"]["winner"] == "a"
+    manager.shutdown()

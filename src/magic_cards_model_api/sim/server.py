@@ -396,7 +396,7 @@ def build_sim_server(
             f" (stopped at the {limits.claude_deadline_s:g} s seat deadline, result so far) or"
             " failed (error: the start failed, or both seats are gone or in error). On done,"
             " deadline or failed both seats are stopped and the game deleted;"
-            f" the result is kept {limits.result_ttl_s:g} s. Relay support_warnings to the"
+            f" the result is kept {limits.log_retention_s:g} s. Relay support_warnings to the"
             " user; support_status 'pending' or 'unavailable' means card support is unchecked."
         )
     )
@@ -557,6 +557,8 @@ class SimMount:
                 self._current = None
                 reaper.stop()
                 await asyncio.to_thread(self._manager.shutdown)
+                if self._claude is not None:
+                    await asyncio.to_thread(self._claude.shutdown)
                 if self._batches is not None:
                     await asyncio.to_thread(self._batches.shutdown)
 
