@@ -1017,3 +1017,163 @@ def test_list_tool_newest_first(fake_registry):
     }  # fmt: skip
     _assert_no_uids(out, uids)
     assert len(_call_tool(server, "sim_match_claude_list", limit=0)["matches"]) == 1
+
+
+# -- S-69: watchdog --
+
+
+def _stalled_manager(monkeypatch=None, **env):
+    clock = Clock()
+    manager = _manager(clock, **env)
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    manager.reap()
+    return clock, manager, match_id
+
+
+def _stall_gauge() -> float:
+    from magic_cards_model_api.match_metrics import REGISTRY
+
+    return REGISTRY.get_sample_value("mtg_sim_claude_stall_seconds") or 0.0
+
+
+def test_no_new_record_for_the_stall_window_marks_stalled_with_a_reason(fake_registry):
+    from magic_cards_model_api.store import store
+
+    clock, manager, match_id = _stalled_manager()
+    assert manager.status(match_id)["status"] == "running"
+    clock.now += 901
+    manager.reap()
+    answer = manager.status(match_id)
+    assert answer["status"] == "stalled"
+    assert answer["stalled_reason"].startswith("no action for 901 s at T")
+    assert "seats a=thinking b=thinking" in answer["stalled_reason"]
+    assert answer["seats"]["a"]["state"] == "thinking"
+    assert answer["checked_s_ago"] == 0.0
+    assert answer["poll_every_s"]
+    assert answer["last_progress_s_ago"] == 901.0
+    with pytest.raises(Exception, match="(?i)claude match"):
+        manager.start(RED, GREEN, seed=2)
+    assert store.get_sim_claude_match(match_id)["status"] == "stalled"
+    assert store.get_sim_claude_match(match_id)["stalled_reason"] == answer["stalled_reason"]
+    _finish(manager, match_id)
+
+
+
+def test_reason_names_the_pending_decision(fake_registry, monkeypatch):
+    from types import SimpleNamespace
+
+    from magic_cards_model_api.store import store
+
+    decision = SimpleNamespace(
+        player="a", kind="choose_targets", prompt="Choose targets for Emrakul cast trigger"
+    )
+    monkeypatch.setattr(
+        store, "paused_command", lambda game_id: (None, None, SimpleNamespace(decision=decision))
+    )
+    clock, manager, match_id = _stalled_manager()
+    clock.now += 901
+    manager.reap()
+    reason = manager.status(match_id)["stalled_reason"]
+    assert "pending decision: choose_targets (a): Choose targets for Emrakul cast trigger" in reason
+    _finish(manager, match_id)
+
+
+
+def test_new_record_returns_a_stalled_match_to_running(fake_registry):
+    from magic_cards_model_api import audit
+    from magic_cards_model_api.store import store
+
+    clock, manager, match_id = _stalled_manager()
+    clock.now += 901
+    manager.reap()
+    assert manager.status(match_id)["status"] == "stalled"
+    seq = audit.record(_game_id(manager, match_id), "pass_priority", player="a", reasoning="ok")
+    manager.reap()
+    answer = manager.status(match_id)
+    assert answer["status"] == "running"
+    assert "stalled_reason" not in answer
+    assert answer["last_seq"] == seq
+    assert answer["last_progress_s_ago"] == 0.0
+    assert store.get_sim_claude_match(match_id)["status"] == "running"
+    assert store.get_sim_claude_match(match_id)["last_seq"] == seq
+    _finish(manager, match_id)
+
+
+
+def test_stall_abort_fails_the_match_and_frees_the_slot(fake_registry):
+    from magic_cards_model_api.store import store
+
+    clock, manager, match_id = _stalled_manager()
+    game_id = _game_id(manager, match_id)
+    uids = list(store.seat_uids(game_id))
+    clock.now += 1801
+    manager.reap()
+    answer = manager.status(match_id)
+    assert answer["status"] == "failed"
+    assert answer["error"].startswith("aborted after 1800 s without progress: no action for")
+    assert sorted(fake_registry.stopped) == sorted(uids)
+    assert store.get(game_id) is None
+    assert manager._matches[match_id].ended.is_set()
+    _finish(manager, _start(manager, RED, GREEN, seed=2)["match_id"])
+
+
+def test_abort_racing_a_cancel_claims_once(fake_registry):
+    import threading
+
+    from magic_cards_model_api.store import store
+
+    clock, manager, match_id = _stalled_manager()
+    uids = list(store.seat_uids(_game_id(manager, match_id)))
+    clock.now += 1801
+    terminal = ("failed", "cancelled")
+    before = sum(_matches_count(s) for s in terminal)
+    barrier = threading.Barrier(2)
+    errors: list[BaseException] = []
+
+    def run(call):
+        try:
+            barrier.wait(10)
+            call()
+        except BaseException as exc:  # noqa: BLE001 - surfaced by the assert below
+            errors.append(exc)
+
+    threads = [
+        threading.Thread(target=run, args=(manager.reap,)),
+        threading.Thread(target=run, args=(lambda: manager.cancel(match_id),)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(30)
+    assert not any(t.is_alive() for t in threads)
+    assert errors == []
+    assert manager.status(match_id)["status"] in terminal
+    assert sum(_matches_count(s) for s in terminal) == before + 1
+    assert manager._matches[match_id].ended.is_set()
+    assert sorted(fake_registry.stopped) == sorted(uids)
+
+
+def test_stall_gauge_tracks_the_stalled_match(fake_registry):
+    from magic_cards_model_api import audit
+
+    clock, manager, match_id = _stalled_manager()
+    assert _stall_gauge() == 0
+    clock.now += 901
+    manager.reap()
+    assert _stall_gauge() == 901
+    audit.record(_game_id(manager, match_id), "pass_priority", player="a", reasoning="ok")
+    manager.reap()
+    assert _stall_gauge() == 0
+    _finish(manager, match_id)
+
+
+
+def test_game_over_wins_over_stall(fake_registry):
+    clock, manager, match_id = _stalled_manager()
+    clock.now += 901
+    manager.reap()
+    assert manager.status(match_id)["status"] == "stalled"
+    _end_game(_game_id(manager, match_id), "b")
+    manager.reap()
+    assert manager.status(match_id)["status"] == "done"
+    assert _stall_gauge() == 0

@@ -3629,3 +3629,10 @@ Retroactive audit (2026-09-26) of every change to pre-existing test content in a
   for a match no longer held in memory (cancel of a terminal or row-only match is a no-op that
   answers the final status). `test_finished_result_dropped_after_ttl` changed: after the TTL the
   status now answers from the row, so the refusal moved behind deleting the row.
+- 2026-11-16 (S-69, T-551): no-progress watchdog. The progress signal is `max(records.seq)`,
+  read on the 30 s reaper pass (no new store hook). 900 s stall and 1800 s abort chosen to exceed
+  a slow high-effort decision (Q4 B). `stalled` stays non-terminal: it holds the slot, goes back
+  to `running` on a new record, and `_finish` claims `failed` from it like from `running`. The
+  first seq read only sets the baseline (`last_seq`); `last_progress` starts when the match
+  becomes `running`. Terminal checks (game gone, over, deadline, dead seats) run before the
+  stall checks. The stall gauge is set on every `reap` from the stalled matches.

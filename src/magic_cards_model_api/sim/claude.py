@@ -41,6 +41,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, get_args
 from uuid import UUID
 
+from magic_cards_model.models import Game
 from prometheus_client import Counter, Gauge
 
 from magic_cards_model_api import ai_seat
@@ -118,6 +119,9 @@ class _ClaudeMatch:
     finished_wall: datetime | None = None  # stamped when the match first becomes terminal
     support: dict[str, Any] = field(default_factory=lambda: support_unknown("pending"))
     lock: threading.Lock = field(default_factory=threading.Lock)
+    last_seq: int | None = None  # newest `records.seq` the reaper saw
+    last_progress: float | None = None  # clock time of the last new record (or of `running`)
+    stalled_reason: str | None = None
     ended: threading.Event = field(default_factory=threading.Event)  # set on the terminal claim
 
     def secrets(self) -> list[str]:
@@ -258,6 +262,7 @@ class ClaudeMatchManager:
                 promoted = match.status == "starting"
                 if promoted:
                     match.status = "running"
+                    match.last_progress = self._clock()
             if promoted:
                 self._persist(match)
                 return
@@ -451,9 +456,14 @@ class ClaudeMatchManager:
                         "result": match.result,
                         "started_at": match.started_wall,
                         "finished_at": match.finished_wall,
-                        "last_seq": None,  # Task 6 fills the progress fields
-                        "last_progress_at": None,
-                        "stalled_reason": None,
+                        "last_seq": match.last_seq,
+                        "last_progress_at": (
+                            None
+                            if match.last_progress is None
+                            else self._wall()
+                            - timedelta(seconds=self._clock() - match.last_progress)
+                        ),
+                        "stalled_reason": match.stalled_reason,
                     }
                 store.put_sim_claude_match(row)
         except Exception as exc:  # noqa: BLE001 - persistence must never stop a match
@@ -594,7 +604,7 @@ class ClaudeMatchManager:
                 if self._clock() - match.started < self._start_deadline_s():
                     return
                 start_timed_out = True
-            elif match.status != "running":
+            elif match.status not in ("running", "stalled"):
                 return
             else:
                 start_timed_out = False
@@ -615,6 +625,7 @@ class ClaudeMatchManager:
         except GameUnloadable:
             game = None
         turn = game.turn if game is not None else None
+        seq = self._max_seq(game_id) if game is not None else None
         status, error = None, None
         if game is None:
             status = "failed"
@@ -630,14 +641,85 @@ class ClaudeMatchManager:
                 " stopped; the result is the game so far."
             )
         with match.lock:
-            if match.status != "running":
+            if match.status not in ("running", "stalled"):
                 return
-            match.seat_states, match.checked = states, self._clock()
+            now = self._clock()
+            match.seat_states, match.checked = states, now
             if game is not None:
                 match.turn = turn.turn_number if turn is not None else None
                 match.step = str(turn.step) if turn is not None else None
+            changed = False
+            if seq is not None and seq != match.last_seq:
+                if match.last_seq is not None:
+                    match.last_progress = now
+                match.last_seq = seq
+                changed = True
+                if match.status == "stalled":
+                    match.status, match.stalled_reason = "running", None
+            idle = now - (match.last_progress if match.last_progress is not None else match.started)
         if status is not None:
             self._finish(match, status, error)
+            return
+        if idle >= self._limits.claude_stall_s:
+            reason = self._stall_reason(game_id, game, states, idle)
+            if idle >= self._limits.claude_stall_abort_s:
+                abort = self._limits.claude_stall_abort_s
+                self._finish(
+                    match, "failed", f"aborted after {abort:g} s without progress: {reason}"
+                )
+                return
+            with match.lock:
+                if match.status not in ("running", "stalled"):
+                    return
+                match.status, match.stalled_reason = "stalled", reason
+            changed = True
+        if changed:
+            self._persist(match)
+
+    @staticmethod
+    def _max_seq(game_id: str | None) -> int | None:
+        from magic_cards_model_api.store import store
+
+        if game_id is None:
+            return None
+        try:
+            return store.max_record_seq(game_id)
+        except Exception as exc:  # noqa: BLE001 - no progress read: the watchdog skips this pass
+            logger.warning("claude sim progress read failed (%s)", type(exc).__name__)
+            return None
+
+    def _stall_reason(
+        self, game_id: str, game: Game | None, states: dict[str, str], idle_s: float
+    ) -> str:
+        """One ASCII line on why the match looks stuck; a part whose data is missing is left
+        out. Reads the store without `match.lock`."""
+        from magic_cards_model_api.store import store
+
+        parts = [f"no action for {idle_s:.0f} s"]
+        turn = game.turn if game is not None else None
+        if turn is not None:
+            parts[0] += f" at T{turn.turn_number} {turn.step}"
+        payload: dict[str, Any] = {}
+        pending = None
+        try:
+            tail = store.recent_records(game_id, 1)
+            payload = tail[0]["payload"] if tail else {}
+            paused = store.paused_command(game_id)
+            pending = paused[2].decision if paused is not None else None
+        except Exception as exc:  # noqa: BLE001 - the reason stands with what could be read
+            logger.warning("claude sim stall read failed (%s)", type(exc).__name__)
+        if payload.get("priority_holder"):
+            parts.append(f"priority: {payload['priority_holder']}")
+        if pending is not None:
+            kind = getattr(pending.kind, "value", pending.kind)
+            prompt = str(pending.prompt)[:120]
+            parts.append(f"pending decision: {kind} ({pending.player}): {prompt}")
+        stack = (payload.get("snapshot") or {}).get("stack") or []
+        if stack:
+            top = stack[-1]
+            parts.append(f"stack top: {top.get('name') if isinstance(top, dict) else top}")
+        parts.append("seats " + " ".join(f"{seat}={state}" for seat, state in states.items()))
+        return gamelog.ascii_text("; ".join(parts))
 
     def _start_deadline_s(self) -> float:
         return min(START_DEADLINE_S, self._limits.claude_deadline_s)
@@ -667,9 +749,11 @@ class ClaudeMatchManager:
             status, turn, step = match.status, match.turn, match.step
             result, error, finished = match.result, match.error, match.finished
             seat_states, checked = dict(match.seat_states), match.checked
+            last_seq, last_progress = match.last_seq, match.last_progress
+            stalled_reason = match.stalled_reason
         if status == "starting":
             states = {seat: "starting" for seat in _SEATS}
-        elif status == "running":
+        elif status in ("running", "stalled"):
             states = {seat: seat_states.get(seat, "unknown") for seat in _SEATS}
         else:
             states = {seat: "stopped" for seat in _SEATS}
@@ -690,7 +774,13 @@ class ClaudeMatchManager:
         }
         if status in _LIVE:
             out["poll_every_s"] = POLL_EVERY_S
-        if status == "running":
+        if status in ("running", "stalled"):
+            out["last_seq"] = last_seq
+            out["last_progress_s_ago"] = (
+                None if last_progress is None else round(self._clock() - last_progress, 1)
+            )
+            if status == "stalled":
+                out["stalled_reason"] = stalled_reason
             # Seat states, turn and step are the reaper's last read (every 30 s).
             out["checked_s_ago"] = None if checked is None else round(self._clock() - checked, 1)
         if result is not None:
@@ -710,6 +800,14 @@ class ClaudeMatchManager:
             except Exception as exc:  # noqa: BLE001 - one match must not stop the others
                 logger.warning("claude sim reap failed (%s)", type(exc).__name__)
         now = self._clock()
+        with self._lock:
+            live = list(self._matches.values())
+        idles = []
+        for match in live:
+            with match.lock:
+                if match.status == "stalled" and match.last_progress is not None:
+                    idles.append(now - match.last_progress)
+        STALL_SECONDS.set(max(idles, default=0))
         with self._lock:
             old = [
                 mid

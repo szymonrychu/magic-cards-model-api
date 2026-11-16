@@ -809,6 +809,8 @@ environment, no database and a memory cap.
   | `MTG_SIM_WORKER_MAX_RSS_MB` | 1024 | resident memory cap of a sim worker process |
   | `MTG_SIM_MAX_CLAUDE_MATCHES` | 1 | Claude matches at once |
   | `MTG_SIM_CLAUDE_DEADLINE_S` | 14400 | seat deadline of a Claude match (not the batch cap) |
+  | `MTG_SIM_CLAUDE_STALL_S` | 900 | seconds without a new action before a Claude match is `stalled` (non-terminal, holds the slot) |
+  | `MTG_SIM_CLAUDE_STALL_ABORT_S` | 1800 | seconds without a new action before a stalled match is failed and cleaned up (must exceed the stall window) |
   | `MTG_SIM_CLAUDE_MODEL` | claude-opus-5-5 | default model of a Claude match seat |
   | `MTG_SIM_CLAUDE_EFFORT` | low | default effort of a Claude match seat |
   | `MTG_SIM_CLAUDE_MODELS` | claude-opus-5-5, claude-opus-5, claude-sonnet-5-5, claude-sonnet-5, claude-haiku-4-5 | allowed models (comma list) |

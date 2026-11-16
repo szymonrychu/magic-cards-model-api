@@ -125,3 +125,10 @@ def test_max_snapshots_defaults_to_16_and_reads_the_env():
 def test_log_retention_default_and_override():
     assert SimLimits.from_env({}).log_retention_s == 2592000.0
     assert SimLimits.from_env({"MTG_SIM_LOG_RETENTION_S": "60"}).log_retention_s == 60.0
+
+
+def test_stall_windows_default_and_validation():
+    lim = SimLimits.from_env({})
+    assert (lim.claude_stall_s, lim.claude_stall_abort_s) == (900.0, 1800.0)
+    with pytest.raises(ValueError, match="MTG_SIM_CLAUDE_STALL_ABORT_S must be greater"):
+        SimLimits.from_env({"MTG_SIM_CLAUDE_STALL_S": "600", "MTG_SIM_CLAUDE_STALL_ABORT_S": "600"})

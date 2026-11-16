@@ -60,6 +60,8 @@ class SimLimits:
     worker_max_rss_mb: int
     max_claude_matches: int
     claude_deadline_s: float
+    claude_stall_s: float
+    claude_stall_abort_s: float
     result_ttl_s: float
     baseline_enabled: bool
     claude_model: str
@@ -71,6 +73,12 @@ class SimLimits:
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> SimLimits:
         env = os.environ if env is None else env
+        stall_s = _number(env, "MTG_SIM_CLAUDE_STALL_S", 900, float)
+        stall_abort_s = _number(env, "MTG_SIM_CLAUDE_STALL_ABORT_S", 1800, float)
+        if stall_abort_s <= stall_s:
+            raise ValueError(
+                "MTG_SIM_CLAUDE_STALL_ABORT_S must be greater than MTG_SIM_CLAUDE_STALL_S"
+            )
         return cls(
             token=env.get("MTG_SIM_TOKEN") or None,
             max_sandboxes=_number(env, "MTG_SIM_MAX_SANDBOXES", 1, int),
@@ -83,6 +91,8 @@ class SimLimits:
             worker_max_rss_mb=_number(env, "MTG_SIM_WORKER_MAX_RSS_MB", 1024, int),
             max_claude_matches=_number(env, "MTG_SIM_MAX_CLAUDE_MATCHES", 1, int),
             claude_deadline_s=_number(env, "MTG_SIM_CLAUDE_DEADLINE_S", 14400, float),
+            claude_stall_s=stall_s,
+            claude_stall_abort_s=stall_abort_s,
             result_ttl_s=_number(env, "MTG_SIM_RESULT_TTL_S", 86400, float),
             baseline_enabled=_flag(env, "MTG_SIM_BASELINE_ENABLED"),
             claude_model=_text(env, "MTG_SIM_CLAUDE_MODEL", DEFAULT_CLAUDE_MODEL),
