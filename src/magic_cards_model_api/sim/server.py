@@ -391,12 +391,12 @@ def build_sim_server(
     @server.tool(
         description=(
             "Check a Claude-seat match at once (no waiting): answers from the last background"
-            " check (every 30 s, checked_s_ago). status: starting (booting the game and creating the seat"
-            " Jobs; failed if not done within 5 minutes), running (turn, step and each seat's"
-            " state: pending while the cluster is full, then thinking or idle), stalled (no new"
-            f" action for {limits.claude_stall_s:g} s: not final, back to running on progress,"
-            f" failed after {limits.claude_stall_abort_s:g} s; stalled_reason says where it"
-            " hangs; running and stalled also answer last_seq and last_progress_s_ago), done"
+            " check (every 30 s, checked_s_ago). status: starting (booting the game and creating"
+            " the seat Jobs; failed if not done within 5 minutes), running (turn, step and each"
+            " seat's state: pending while the cluster is full, then thinking or idle), stalled"
+            f" (no new action for {limits.claude_stall_s:g} s: not final, back to running on"
+            f" progress, failed after {limits.claude_stall_abort_s:g} s; stalled_reason says where"
+            " it hangs; running and stalled also answer last_seq and last_progress_s_ago), done"
             " (result: winner a or b or null, drawn, turns, the last 10 log lines), deadline"
             f" (stopped at the {limits.claude_deadline_s:g} s seat deadline, result so far) or"
             " failed (error: the start failed, or both seats are gone or in error). On done,"
