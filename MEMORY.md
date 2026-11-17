@@ -3665,3 +3665,8 @@ Retroactive audit (2026-09-26) of every change to pre-existing test content in a
   comes from the rows). Secrets are removed per substring (`_scrubber`), never by replacing the
   document. A match with no ledger exports its header plus a note, never a 500; only an unknown
   id is a 404. `_read_ledger` is the one ledger read shared by the log projection and export.
+
+- 2026-11-16 (sim game log, S-69): the match export is HTTP-only under `/sim` with the shared bearer (Q5 B): no paged tool text, in-cluster only; `sim_match_claude_export` answers the URL.
+- 2026-11-16 (sim game log): reasoning is the seat's stated `reasoning` only (Q2 A); no transcript capture, so no seat image change.
+- 2026-11-16 (sim game log): the compact-v1 limits (300-char why, 40,000-char log answer, 45,000-char wait head/tail) are constants in `sim/gamelog.py`; re-measure them on the first real match.
+- 2026-11-16 (sim game log): the Claude tool texts no longer ask for polling: start answers `next` (call `sim_match_claude_wait` once) and `poll_every_s` is gone from every answer; status says "check at once (no waiting)". Why: one blocking wait call replaces a 300 s poll loop for the calling agent.

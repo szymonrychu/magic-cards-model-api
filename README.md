@@ -778,8 +778,10 @@ environment, no database and a memory cap.
   `effort` apply to both seats (defaults `claude-opus-5-5` at `low`); `seat_a` / `seat_b`
   (`{"model": ..., "effort": ...}`) override one seat. A model outside `MTG_SIM_CLAUDE_MODELS` or an
   effort outside the five levels is refused, and the start and status answers echo each seat's
-  model and effort;
-  `sim_match_claude_status(match_id)` answers from the last background check (every 30 s). One
+  model and effort. The flow is start, then `sim_match_claude_wait` once, with `sim_match_log`,
+  `sim_match_claude_cancel`, `sim_match_claude_list`, `sim_match_claude_export` and
+  `sim_match_claude_status` as the side tools (none of them needs polling);
+  `sim_match_claude_status(match_id)` answers at once from the last background check (every 30 s). One
   match at a time. A game takes about 33-55 min, and the match is bounded by the seat deadline
   (`MTG_SIM_CLAUDE_DEADLINE_S`), not by the engine-only batch cap.
   `sim_match_claude_wait(match_id, max_wait_s=None)` is the one call to make after the start: it
@@ -913,8 +915,8 @@ is the same file; the value goes to the preset env) is in `deploy/k8s/README.md`
 - "Let me play it" (only when the baseline is enabled): `sim_play_new`, keep with `mulligan` `{"take": false}`, play with `sim_act`
   as `you`, finish with `sim_end`.
 - A Claude-vs-Claude match only when the user accepts 33-55 min per game:
-  `sim_match_claude_start`, then poll `sim_match_claude_status` every few minutes (about 300 s),
-  never in a tight loop.
+  `sim_match_claude_start`, then call `sim_match_claude_wait` once; it returns when the match ends
+  with the result and the log (`sim_match_log` reads it live, `sim_match_claude_cancel` stops it).
 - Always relay `support_warnings` (and `support_note`) to the user. Never claim a result for a
   card the engine runs as silent; say the result is unreliable.
 - When a tool refuses with "slot in use" (or a batch or match is already running), tell the

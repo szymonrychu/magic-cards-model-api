@@ -46,7 +46,9 @@ Nothing here touches a real game.
 There is one sandbox slot for everyone and it frees after an idle TTL: end yours with sim_end.
 Build a board with sim_new (players, cards, step), then act with sim_act and read with sim_state.
 Or run a whole scripted line with sim_run_script (setup, steps, expectations) in one call.
-Or watch two Claude seats play one real game with sim_match_claude_start (slow: poll it).
+Or watch two Claude seats play one real game with sim_match_claude_start, then call
+sim_match_claude_wait(match_id) once: it returns when the match ends with the result and the log
+(sim_match_log reads it live, sim_match_claude_cancel stops it).
 Or turn an MTGO game log into a scenario with sim_import_mtgo_log (and run it with run=True).
 Or review an MTGO game log from one player's seat with sim_review_mtgo_log (a timeline, no sandbox).
 Reviewing an MTGO game: never review in the main agent. Hand the review to a SUBAGENT (your own
@@ -369,8 +371,8 @@ def build_sim_server(
             " A game takes about 33-55 min. The two seat Jobs may stay Pending while the"
             " cluster is full, which counts toward the time. A match is bounded by the seat"
             f" deadline ({limits.claude_deadline_s:g} s, env MTG_SIM_CLAUDE_DEADLINE_S), not by"
-            " the 5-minute engine-only cap of sim_match. Poll sim_match_claude_status(match_id)"
-            " about every 300 s; do not poll in a tight loop."
+            " the 5-minute engine-only cap of sim_match. Then call sim_match_claude_wait(match_id)"
+            " once: it returns when the match ends with the result and the full log."
         )
     )
     async def sim_match_claude_start(
@@ -388,8 +390,8 @@ def build_sim_server(
 
     @server.tool(
         description=(
-            "Poll a Claude-seat match; answers at once from the last background check (every"
-            " 30 s, checked_s_ago). status: starting (booting the game and creating the seat"
+            "Check a Claude-seat match at once (no waiting): answers from the last background"
+            " check (every 30 s, checked_s_ago). status: starting (booting the game and creating the seat"
             " Jobs; failed if not done within 5 minutes), running (turn, step and each seat's"
             " state: pending while the cluster is full, then thinking or idle), stalled (no new"
             f" action for {limits.claude_stall_s:g} s: not final, back to running on progress,"

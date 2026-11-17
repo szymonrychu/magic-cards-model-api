@@ -62,7 +62,10 @@ logger = logging.getLogger(__name__)
 
 SIM_OWNER = "sim:claude"
 EXPECTED_MINUTES = "33-55 per game"
-POLL_EVERY_S = 300
+NEXT_HINT = (
+    "call sim_match_claude_wait(match_id) once; it returns when the match ends (or stalls)"
+    " with the result and the full log"
+)
 _LAST_LOG = 10
 _SEATS = ("a", "b")
 _PREFIX_LEN = 8  # k8s Job names carry `uid[:8]` (`k8s_seats.job_name`)
@@ -219,7 +222,7 @@ class ClaudeMatchManager:
                 raise SimRefused(
                     f"A Claude match is already {verb} ({minutes} min elapsed; it is bounded"
                     f" by the {self._limits.claude_deadline_s:g} s seat deadline). Only one"
-                    " runs at a time: poll it or retry later."
+                    " runs at a time: wait for it or retry later."
                 )
             self._matches[match.match_id] = match
         match.started_wall = self._wall()
@@ -235,7 +238,7 @@ class ClaudeMatchManager:
             "match_id": match.match_id,
             "status": "starting",
             "expected_minutes": EXPECTED_MINUTES,
-            "poll_every_s": POLL_EVERY_S,
+            "next": NEXT_HINT,
             "seed": seed,
             "decks": dict(match.decks),
             "seats": _seat_echo(settings),
@@ -781,8 +784,6 @@ class ClaudeMatchManager:
             "seats": {seat: {"state": "stopped", **row["seats"][seat]} for seat in _SEATS},
             **support_unknown("unavailable"),
         }
-        if status in _LIVE:
-            out["poll_every_s"] = POLL_EVERY_S
         if row.get("result") is not None:
             out["result"] = row["result"]
         if row.get("error") is not None:
@@ -1086,8 +1087,6 @@ class ClaudeMatchManager:
             "seats": seats,
             **match.support,
         }
-        if status in _LIVE:
-            out["poll_every_s"] = POLL_EVERY_S
         if status in ("running", "stalled"):
             out["last_seq"] = last_seq
             out["last_progress_s_ago"] = (

@@ -549,3 +549,44 @@ def test_export_tool_answers_the_url_only(monkeypatch, fake_registry):
     assert (
         "No Claude match" in call(server, "sim_match_claude_export", match_id="claude-no")["error"]
     )
+
+
+def _claude_tool_texts(server) -> dict[str, str]:
+    tools = asyncio.run(server.list_tools())
+    return {
+        t.name: t.description or ""
+        for t in tools
+        if t.name.startswith("sim_match_claude_") or t.name == "sim_match_log"
+    }
+
+
+def test_claude_tool_texts_do_not_ask_for_polling(baseline_off_sim):
+    texts = _claude_tool_texts(baseline_off_sim)
+    texts["INSTRUCTIONS"] = baseline_off_sim.instructions
+    for name, text in texts.items():
+        assert re.search(r"poll", text, re.I) is None, name
+    assert "sim_match_claude_wait" in texts["sim_match_claude_start"]
+    assert "sim_match_claude_wait" in texts["INSTRUCTIONS"]
+    assert texts["sim_match_claude_status"].startswith("Check a Claude-seat match at once")
+
+
+def test_claude_tools_are_all_listed(sim):
+    names = {t.name for t in asyncio.run(sim.list_tools())}
+    assert names >= {
+        "sim_match_claude_start",
+        "sim_match_claude_status",
+        "sim_match_claude_wait",
+        "sim_match_claude_cancel",
+        "sim_match_claude_list",
+        "sim_match_claude_export",
+        "sim_match_log",
+    }
+
+
+def test_readme_claude_guide_names_the_wait_call():
+    readme = (Path(__file__).resolve().parent.parent / "README.md").read_text()
+    start = readme.index("## Chat simulation MCP")
+    section = readme[start : readme.index("\n## ", start + 1)]
+    assert "sim_match_claude_wait" in section
+    assert "every 300 s" not in section
+    assert "about 300 s" not in section

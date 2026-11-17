@@ -59,7 +59,8 @@ def test_start_boots_two_ai_seats_outside_the_lobby(fake_registry):
     assert out["status"] == "starting"
     assert re.fullmatch(r"claude-[0-9a-f]{32}", out["match_id"])
     assert out["expected_minutes"] == "33-55 per game"
-    assert out["poll_every_s"] == 300
+    assert "sim_match_claude_wait" in out["next"]
+    assert "poll_every_s" not in out
     game_id = _game_id(manager, out["match_id"])
     assert game_id not in store.ui_games()
     assert store.owner_user_id(game_id) == SIM_OWNER
@@ -291,7 +292,7 @@ def test_start_answers_starting_while_boot_is_slow(fake_registry, monkeypatch):
     out = manager.start(RED, GREEN, seed=1)
     assert time.monotonic() - began < 5
     assert out["status"] == "starting"
-    assert set(out) >= {"match_id", "expected_minutes", "poll_every_s"}
+    assert set(out) >= {"match_id", "expected_minutes", "next"}
     polled = manager.status(out["match_id"])
     assert polled["status"] == "starting"
     assert polled["seats"] == {
@@ -1035,7 +1036,7 @@ def test_no_new_record_for_the_stall_window_marks_stalled_with_a_reason(fake_reg
     assert "seats a=thinking b=thinking" in answer["stalled_reason"]
     assert answer["seats"]["a"]["state"] == "thinking"
     assert answer["checked_s_ago"] == 0.0
-    assert answer["poll_every_s"]
+    assert "poll_every_s" not in answer
     assert answer["last_progress_s_ago"] == 901.0
     with pytest.raises(Exception, match="(?i)claude match"):
         manager.start(RED, GREEN, seed=2)
