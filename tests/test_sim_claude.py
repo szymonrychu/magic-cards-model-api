@@ -1528,10 +1528,12 @@ def test_log_survives_an_unloadable_game(fake_registry, monkeypatch):
     game_id = _game_id(manager, match_id)
     _cast(game_id, reasoning="face")
 
-    def unloadable(gid):
+    def unloadable(self, gid):
         raise GameUnloadable(gid, "schema bumped")
 
-    monkeypatch.setattr(store, "get", unloadable)
+    # On the class, never the shared instance: undoing an instance patch leaves
+    # a bound copy of the real method behind, shadowing every later class patch.
+    monkeypatch.setattr(type(store), "get", unloadable)
     out = manager.log(match_id)
     assert 'a cast "Lightning Bolt" -> b' in out["lines"]  # the ledger stays
     assert "why: face" in out["lines"]
