@@ -77,6 +77,7 @@ RESTART_ERROR = "the server restarted during the match; the log so far is kept"
 _RETENTION_EVERY_S = 3600
 _LIST_MAX = 50
 LOG_LIMIT_MAX = 500
+EXPORT_FORMATS = {"md": "text/markdown; charset=utf-8", "jsonl": "application/x-ndjson"}
 _EFFORTS = get_args(Effort)
 #: A start (boot with cold card resolution, two seat Job creates) that has not finished after
 #: this long is failed by the reaper and its slot freed; a healthy start takes seconds.
@@ -398,7 +399,11 @@ class ClaudeMatchManager:
                 raise self._unknown(match_id)
             lines = self._log_lines_for(row.get("game_id"), [], LogFilter())
             out = self._answer_from_row(row)
-            return {**out, "log_tail": gamelog.render(lines[-TAIL_LINES:])}
+            return {
+                **out,
+                "log_tail": gamelog.render(lines[-TAIL_LINES:]),
+                "export": self.export_handle(match_id),
+            }
         error = "cancelled by caller"
         text = " ".join(gamelog.ascii_text(reason or "").split())[:_REASON_MAX]
         if text:
@@ -407,7 +412,11 @@ class ClaudeMatchManager:
         with match.lock:
             game_id = match.game_id
         lines = self._log_lines_for(game_id, match.secrets(), LogFilter())
-        return {**self._answer(match), "log_tail": gamelog.render(lines[-TAIL_LINES:])}
+        return {
+            **self._answer(match),
+            "log_tail": gamelog.render(lines[-TAIL_LINES:]),
+            "export": self.export_handle(match_id),
+        }
 
     def _game_ref(self, match_id: str) -> tuple[_ClaudeMatch | None, dict[str, Any] | None]:
         """The in-memory match, else its persisted row; refused like `status` when neither."""
@@ -553,12 +562,52 @@ class ClaudeMatchManager:
                 "truncated": truncated,
                 "next_seq": marker.seq if truncated and marker is not None else None,
             },
+            "export": self.export_handle(match_id),
             **{key: value for key, value in base.items() if key.startswith("support_")},
         }
         if status == "stalled":
             out["note"] = STALLED_NOTE
         # The lines are scrubbed per line already, so this blanks no log text.
         return redact(out, secrets)
+
+    @staticmethod
+    def export_handle(match_id: str) -> dict[str, str]:
+        """Where the whole log of a match is downloaded (HTTP only, behind the sim bearer)."""
+        base = f"{ai_seat.api_service_url()}/sim/matches/{match_id}"
+        return {
+            "markdown": f"{base}/export.md",
+            "jsonl": f"{base}/export.jsonl",
+            "fetch": (
+                'curl -fsS -H "Authorization: Bearer $MTG_SIM_TOKEN" -o <file> <url>'
+                " (in-cluster only)"
+            ),
+        }
+
+    def export(self, match_id: str, fmt: str) -> tuple[str, str]:
+        """The whole match as a document: `(body, media type)` for `fmt` "md" or "jsonl".
+
+        A match with no ledger (failed before boot, cancelled while starting, row-only after a
+        restart whose game is gone) exports its header and an empty log. Seat uids are removed
+        by substring, never by replacing the body."""
+        if fmt not in EXPORT_FORMATS:
+            raise SimRefused('export format must be "md" or "jsonl"')
+        match, row = self._game_ref(match_id)
+        if match is not None:
+            header = self._answer(match)
+            with match.lock:
+                game_id, header["stalled_reason"] = match.game_id, match.stalled_reason
+            secrets = match.secrets()
+        else:
+            assert row is not None
+            header = self._answer_from_row(row)
+            game_id, header["stalled_reason"] = row.get("game_id"), row.get("stalled_reason")
+            secrets = []  # the seat uids are gone with the process
+        scrub = self._scrubber(secrets)
+        ledger = self._read_ledger(game_id)
+        rows, names = (ledger[0], ledger[2]) if ledger is not None else ([], lambda _v: None)
+        if fmt == "jsonl":
+            return gamelog.render_jsonl(rows, scrub), EXPORT_FORMATS[fmt]
+        return gamelog.render_markdown(header, rows, names, scrub), EXPORT_FORMATS[fmt]
 
     def list(self, limit: int = 10) -> dict[str, Any]:
         """Recent matches, newest first: persisted rows, with a match held in memory
@@ -800,10 +849,34 @@ class ClaudeMatchManager:
         `since_seq > 0` projects only the rows after `since_seq` (that row itself is read as
         the delta baseline). `[]` when there is no game or the read fails.
         """
+        ledger = ClaudeMatchManager._read_ledger(game_id, since_seq)
+        if ledger is None:
+            return []
+        rows, baseline, names = ledger
+        return gamelog.project(
+            rows, names, flt, baseline=baseline, scrub=ClaudeMatchManager._scrubber(secrets)
+        )
+
+    @staticmethod
+    def _scrubber(secrets: list[str]) -> Callable[[str], str]:
+        def scrub(text: str) -> str:
+            for secret in secrets:
+                if secret:
+                    text = text.replace(secret, "<redacted>")
+            return text
+
+        return scrub
+
+    @staticmethod
+    def _read_ledger(
+        game_id: str | None, since_seq: int = 0
+    ) -> tuple[list[dict[str, Any]], dict[str, Any] | None, gamelog.Names] | None:
+        """(rows, baseline snapshot, card name resolver) of a live or archived game; None when
+        there is no game or the read fails (the answer stands without its log)."""
         from magic_cards_model_api.store import store
 
         if game_id is None:
-            return []
+            return None
         try:
             baseline = None
             if since_seq > 0:
@@ -819,7 +892,7 @@ class ClaudeMatchManager:
                 game = archived.game if archived is not None else None
         except Exception as exc:  # noqa: BLE001 - the answer stands without its log
             logger.warning("claude sim log read failed (%s)", type(exc).__name__)
-            return []
+            return None
 
         def names(value: str) -> str | None:
             try:
@@ -828,13 +901,7 @@ class ClaudeMatchManager:
                 return None
             return getattr(found, "name", None)
 
-        def scrub(text: str) -> str:
-            for secret in secrets:
-                if secret:
-                    text = text.replace(secret, "<redacted>")
-            return text
-
-        return gamelog.project(rows, names, flt, baseline=baseline, scrub=scrub)
+        return rows, baseline, names
 
     def _advance(self, match: _ClaudeMatch) -> None:
         """The reaper's pass over one match: read seats and game, apply the transitions.

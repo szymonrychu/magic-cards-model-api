@@ -18,9 +18,11 @@ from typing import Any, get_args
 
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
+from starlette.requests import Request
+from starlette.responses import JSONResponse, Response
 
 from magic_cards_model_api.agent_settings import Effort
-from magic_cards_model_api.sim.claude import ClaudeMatchManager
+from magic_cards_model_api.sim.claude import EXPORT_FORMATS, ClaudeMatchManager
 from magic_cards_model_api.sim.claude_wait import wait_for_match
 from magic_cards_model_api.sim.config import SimLimits
 from magic_cards_model_api.sim.lookup import MAX_LOOKUP_NAMES, card_lookup
@@ -495,6 +497,34 @@ def build_sim_server(
 
     @server.tool(
         description=(
+            "Where to download the whole log of a Claude-seat match: answers {match_id, format,"
+            " url, media_type, fetch}, never the document text. format is 'markdown' (default;"
+            " header, one section per turn with the full stated reasoning, final board) or"
+            " 'jsonl' (one JSON object per ledger record). Download it with the fetch command"
+            " (curl with the sim bearer in $MTG_SIM_TOKEN, in-cluster only) into a file and read"
+            " or search that file."
+        )
+    )
+    async def sim_match_claude_export(match_id: str, format: str = "markdown") -> dict[str, Any]:
+        if format not in _EXPORT_TOOL_FORMATS:
+            return {"error": 'format must be "markdown" or "jsonl"'}
+        fmt = _EXPORT_TOOL_FORMATS[format]
+
+        def run() -> dict[str, Any]:
+            claude._game_ref(match_id)  # refused like the other tools when unknown
+            handle = claude.export_handle(match_id)
+            return {
+                "match_id": match_id,
+                "format": format,
+                "url": handle[format],
+                "media_type": EXPORT_FORMATS[fmt],
+                "fetch": handle["fetch"],
+            }
+
+        return await _tool(run)
+
+    @server.tool(
+        description=(
             f"Check up to {MAX_LOOKUP_NAMES} card names (read from a photo or a chat) before"
             " building a board. Each resolves through Scryfall (exact, then fuzzy, so loose"
             " spellings work) and comes back as {query, status: found | fuzzy, exact, name,"
@@ -515,6 +545,27 @@ def build_sim_server(
         return await _tool(lambda: manager.end(sandbox_id))
 
     return server
+
+
+_EXPORT_TOOL_FORMATS = {"markdown": "md", "jsonl": "jsonl"}
+
+
+def _export_endpoint(claude: ClaudeMatchManager | None, fmt: str) -> Callable[..., Any]:
+    async def endpoint(request: Request) -> Response:
+        match_id = request.path_params["match_id"]
+        if claude is None:
+            return JSONResponse({"error": "no Claude matches on this server"}, status_code=404)
+        try:
+            body, media_type = await asyncio.to_thread(claude.export, match_id, fmt)
+        except SimRefused as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        return Response(
+            body,
+            media_type=media_type,
+            headers={"Content-Disposition": f'attachment; filename="{match_id}.{fmt}"'},
+        )
+
+    return endpoint
 
 
 def _env_token() -> str | None:
@@ -604,6 +655,12 @@ class SimMount:
             streamable_http_path="/mcp",
             transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
         )
+        for fmt in EXPORT_FORMATS:
+            starlette_app.add_route(
+                f"/matches/{{match_id}}/export.{fmt}",
+                _export_endpoint(self._claude, fmt),
+                methods=["GET"],
+            )
         self._manager.reopen()
         reaper = Reaper()
         reaper.register(self._manager.reap)

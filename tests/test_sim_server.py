@@ -475,3 +475,77 @@ def test_wait_tool_refuses_a_non_positive_max_wait(sim):
     assert "max_wait_s" in out["error"]
     out = call(sim, "sim_match_claude_wait", match_id="claude-nope")
     assert "No Claude match" in out["error"]
+
+
+def test_export_route_needs_the_bearer(monkeypatch):
+    monkeypatch.setenv("MTG_SIM_TOKEN", "t0k")
+    with TestClient(app) as c:
+        assert c.get("/sim/matches/claude-x/export.md").status_code == 401
+        assert c.get("/sim/matches/claude-x/export.jsonl").status_code == 401
+        bad = c.get("/sim/matches/claude-x/export.md", headers={"Authorization": "Bearer no"})
+        assert bad.status_code == 401
+    monkeypatch.delenv("MTG_SIM_TOKEN")
+    with TestClient(app) as c:
+        assert c.get("/sim/matches/claude-x/export.md").status_code == 503
+
+
+def _export_fixture(monkeypatch):
+    from sim_claude_kit import GREEN, RED, _finish, _game_id, _start
+
+    from magic_cards_model_api import audit
+    from magic_cards_model_api.sim.claude import ClaudeMatchManager
+
+    limits = SimLimits.from_env({})
+    manager = SandboxManager(limits)
+    claude_manager = ClaudeMatchManager(limits)
+    server = build_sim_server(manager, limits, claude=claude_manager)
+    match_id = _start(claude_manager, RED, GREEN, seed=1)["match_id"]
+    audit.record(_game_id(claude_manager, match_id), "play_land", player="a", card="Forest")
+    _finish(claude_manager, match_id)
+    return server, manager, claude_manager, match_id
+
+
+def test_export_route_serves_markdown_and_jsonl(monkeypatch, fake_registry):
+    server, manager, claude_manager, match_id = _export_fixture(monkeypatch)
+    root = {"Authorization": "Bearer t0k"}
+    with progress_app(monkeypatch, server, manager, claude=claude_manager) as url:
+        base = url.removesuffix("/mcp")
+        md = httpx2.get(f"{base}/matches/{match_id}/export.md", headers=root)
+        js = httpx2.get(f"{base}/matches/{match_id}/export.jsonl", headers=root)
+        missing = httpx2.get(f"{base}/matches/claude-nope/export.md", headers=root)
+        anon = httpx2.get(f"{base}/matches/{match_id}/export.md")
+    assert md.status_code == 200 and md.headers["content-type"].startswith("text/markdown")
+    assert f'filename="{match_id}.md"' in md.headers["content-disposition"]
+    assert md.text.startswith(f"# Claude match {match_id}")
+    assert js.status_code == 200 and js.headers["content-type"].startswith("application/x-ndjson")
+    assert f'filename="{match_id}.jsonl"' in js.headers["content-disposition"]
+    assert all(json.loads(line)["seq"] for line in js.text.splitlines())
+    assert missing.status_code == 404 and "error" in missing.json()
+    assert anon.status_code == 401
+
+
+def test_export_route_without_a_claude_manager_is_404(monkeypatch):
+    limits = SimLimits.from_env({})
+    manager = SandboxManager(limits)
+    server = build_sim_server(manager, limits)
+    with progress_app(monkeypatch, server, manager) as url:
+        base = url.removesuffix("/mcp")
+        out = httpx2.get(
+            f"{base}/matches/claude-x/export.md", headers={"Authorization": "Bearer t0k"}
+        )
+    assert out.status_code == 404
+
+
+def test_export_tool_answers_the_url_only(monkeypatch, fake_registry):
+    server, _manager, _claude, match_id = _export_fixture(monkeypatch)
+    out = call(server, "sim_match_claude_export", match_id=match_id, format="jsonl")
+    assert out["url"].endswith(f"/sim/matches/{match_id}/export.jsonl")
+    assert out["media_type"] == "application/x-ndjson" and "$MTG_SIM_TOKEN" in out["fetch"]
+    assert "lines" not in out and "body" not in out
+    default = call(server, "sim_match_claude_export", match_id=match_id)
+    assert default["format"] == "markdown" and default["url"].endswith("export.md")
+    bad = call(server, "sim_match_claude_export", match_id=match_id, format="pdf")
+    assert "markdown" in bad["error"] and "jsonl" in bad["error"]
+    assert (
+        "No Claude match" in call(server, "sim_match_claude_export", match_id="claude-no")["error"]
+    )

@@ -678,7 +678,7 @@ environment, no database and a memory cap.
 - Reach: in-cluster only. `/sim` is denied at the public ingresses like `/metrics`.
 - Tools: `sim_card_lookup`, `sim_new`, `sim_state`, `sim_legal_actions`, `sim_act`, `sim_snapshot`, `sim_restore`,
   `sim_run_script`, `sim_import_mtgo_log`, `sim_review_mtgo_log`, `sim_end`, `sim_match_claude_start`, `sim_match_claude_status`,
-  `sim_match_claude_wait`, `sim_match_claude_cancel`, `sim_match_log`; and,
+  `sim_match_claude_wait`, `sim_match_claude_cancel`, `sim_match_log`, `sim_match_claude_export`; and,
   only when `MTG_SIM_BASELINE_ENABLED` is set, `sim_play_new`, `sim_match`, `sim_match_status`.
   The engine baseline AI is off as an opponent by default: with the flag unset those three tools
   are not registered and `BatchManager.start` / `SandboxManager.new(mode="play")` refuse with a
@@ -800,6 +800,16 @@ environment, no database and a memory cap.
   characters) of every action with the seat's stated reasoning, live or finished; page with
   `since_seq=next_seq` while `more`. A match that failed before the game booted answers an empty
   log and a `note`.
+  `sim_match_claude_export(match_id, format="markdown")` answers where to download the whole
+  log, never the text: `{match_id, format, url, media_type, fetch}`. Two plain HTTP routes serve
+  it behind the same bearer as `/sim/mcp` (401 wrong or missing, 503 without `MTG_SIM_TOKEN`; an
+  unknown match is 404): `GET /sim/matches/{match_id}/export.md` (`text/markdown`: header table,
+  one `## Turn n` section per turn with the untrimmed reasoning, final board) and
+  `GET /sim/matches/{match_id}/export.jsonl` (`application/x-ndjson`: one object per ledger
+  record with `seq, ts, turn, step, phase, actor, action, detail, life, reasoning`). The
+  `fetch` field is `curl -fsS -H "Authorization: Bearer $MTG_SIM_TOKEN" -o <file> <url>`;
+  in-cluster only (`/sim` is denied at the public ingress). A match with no game log exports its
+  header and an empty log. The cancel and wait answers carry the same links as `export`.
   `sim_match_claude_list(limit=10)` lists recent matches (1-50, newest first) from the persisted
   table: `match_id`, `status`, `decks`, `seats`, `started_at`, `finished_at`, `turns`, `winner`,
   `error`; use it to find a `match_id` after a restart or a lost context. Match headers are

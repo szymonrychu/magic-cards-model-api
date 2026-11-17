@@ -448,3 +448,127 @@ def head_tail(
     shown = len([x for x in head if not x.header]) + len([x for x in tail if not x.header])
     omitted = len([x for x in lines if not x.header]) - shown
     return [*head, _marker(omitted, last_seq), *tail], True
+
+
+# -- export ------------------------------------------------------------------------------
+
+
+def _scrub_values(value: Any, scrub: Callable[[str], str]) -> Any:
+    if isinstance(value, str):
+        return scrub(value)
+    if isinstance(value, dict):
+        return {k: _scrub_values(v, scrub) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [_scrub_values(v, scrub) for v in value]
+    return value
+
+
+def _cell(value: Any) -> str:
+    return " ".join(str(value).split()).replace("|", "/")
+
+
+def _header_rows(header: dict[str, Any]) -> list[tuple[str, str]]:
+    decks = header.get("decks") or {}
+    seats = header.get("seats") or {}
+    result = header.get("result") or {}
+    out: list[tuple[str, str]] = [
+        ("Status", str(header.get("status"))),
+        ("Decks", ", ".join(f"{seat}: {deck}" for seat, deck in decks.items())),
+        (
+            "Seats",
+            ", ".join(
+                f"{seat}: {s.get('model')} at {s.get('effort')}" for seat, s in seats.items()
+            ),
+        ),
+        ("Seed", str(header.get("seed"))),
+    ]
+    if result:
+        winner = result.get("winner")
+        outcome = "draw" if result.get("drawn") else f"winner {winner}"
+        out.append(("Result", f"{outcome}, {result.get('turns')} turns"))
+    out.append(("Duration", f"{header.get('elapsed_s')} s"))
+    if header.get("error"):
+        out.append(("Error", str(header["error"])))
+    if header.get("stalled_reason"):
+        out.append(("Stall reason", str(header["stalled_reason"])))
+    return out
+
+
+def render_markdown(
+    header: dict[str, Any],
+    rows: list[dict[str, Any]],
+    names: Names,
+    scrub: Callable[[str], str],
+) -> str:
+    """The whole match as one Markdown document: header table, one section per turn, final board.
+
+    Reasoning is not trimmed. Every line is scrubbed per substring; the text is ASCII.
+    """
+    out = [
+        scrub(ascii_text(f"# Claude match {header.get('match_id')}")),
+        "",
+        "| Field | Value |",
+        "| --- | --- |",
+    ]
+    out.extend(
+        f"| {key} | {scrub(ascii_text(_cell(value)))} |" for key, value in _header_rows(header)
+    )
+    out.append("")
+    if not rows:
+        out.append("No actions were recorded for this match (no game log exists).")
+    flt = LogFilter(kinds="plays", board="changes")
+    lines = project(rows, names, flt, reason_max=None, scrub=scrub)
+    active: dict[int, str] = {}
+    for row in rows:
+        payload = row["payload"]
+        turn = payload.get("turn")
+        if turn is not None and turn not in active:
+            active[turn] = payload.get("active_player") or "-"
+    section: int | None = None
+    fenced = False
+    for line in lines:
+        if line.header:
+            continue
+        if not fenced or line.turn != section:
+            if fenced:
+                out.extend(["```", ""])
+            title = (
+                f"## Turn {line.turn} (active {active.get(line.turn, '-')})"
+                if line.turn is not None
+                else "## Before turn 1"
+            )
+            out.extend([scrub(ascii_text(title)), "", "```text"])
+            section, fenced = line.turn, True
+        out.append(line.text)
+    if fenced:
+        out.extend(["```", ""])
+    last = next(
+        (r["payload"]["snapshot"] for r in reversed(rows) if r["payload"].get("snapshot")), None
+    )
+    if last is not None:
+        board = json.dumps(last, indent=2, sort_keys=True, ensure_ascii=True)
+        out.extend(["## Final board", "", "```json", scrub(board), "```", ""])
+    return "\n".join(out).rstrip("\n") + "\n"
+
+
+def render_jsonl(rows: list[dict[str, Any]], scrub: Callable[[str], str]) -> str:
+    """One JSON object per ledger row and line; every string value is scrubbed."""
+    lines: list[str] = []
+    for row in rows:
+        payload = row["payload"]
+        detail = payload.get("detail") or {}
+        snapshot = payload.get("snapshot")
+        record = {
+            "seq": row["seq"],
+            "ts": payload.get("ts"),
+            "turn": payload.get("turn"),
+            "step": payload.get("step"),
+            "phase": payload.get("phase"),
+            "actor": detail.get("player"),
+            "action": payload.get("action"),
+            "detail": detail,
+            "life": snapshot.get("life") if snapshot else None,
+            "reasoning": payload.get("reasoning"),
+        }
+        lines.append(json.dumps(_scrub_values(record, scrub), ensure_ascii=True, sort_keys=True))
+    return "".join(f"{line}\n" for line in lines)

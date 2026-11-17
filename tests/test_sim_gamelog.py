@@ -268,3 +268,80 @@ def test_head_tail_marker_counts_every_omitted_line_when_the_head_cap_pops_lines
     omitted = int(marker.text.split()[1])
     assert shown + omitted == total
     assert shown < 80
+
+
+# -- export renderers --
+
+
+def _header() -> dict:
+    return {
+        "match_id": "claude-x",
+        "status": "done",
+        "decks": {"a": "Red", "b": "Green"},
+        "seed": 7,
+        "seats": {
+            "a": {"model": "claude-opus-5-5", "effort": "low", "state": "stopped"},
+            "b": {"model": "claude-opus-5-5", "effort": "low", "state": "stopped"},
+        },
+        "elapsed_s": 12.5,
+        "result": {"winner": "a", "drawn": False, "turns": 2},
+        "error": None,
+    }
+
+
+def _export_rows(reason: str = "r") -> list:
+    return [
+        kit.row(1, "play_land", turn=1, card="Forest", reasoning=reason),
+        kit.row(2, "cast", turn=1, card="Bolt", reasoning="x"),
+        kit.row(3, "play_land", turn=2, player="b", active_player="b", card="Mountain"),
+    ]
+
+
+def test_markdown_export_has_header_turn_sections_and_final_board():
+    reason = "w" * 400
+    text = gamelog.render_markdown(_header(), _export_rows(reason), lambda v: None, lambda s: s)
+    assert text.startswith("# Claude match claude-x")
+    assert "## Turn 1 (active a)" in text
+    assert "## Turn 2 (active b)" in text
+    assert "## Final board" in text
+    assert reason in text
+    assert "== T1" not in text
+    text.encode("ascii")
+
+
+def test_markdown_export_of_an_empty_log_has_header_and_a_note():
+    text = gamelog.render_markdown(_header(), [], lambda v: None, lambda s: s)
+    assert text.startswith("# Claude match claude-x")
+    assert "## Turn" not in text and "No actions were recorded" in text
+
+
+def test_markdown_export_scrubs_by_substring():
+    rows = [kit.row(1, "play_land", turn=1, card="Forest", reasoning="uid SECRET1 here")]
+    text = gamelog.render_markdown(
+        _header(), rows, lambda v: None, lambda s: s.replace("SECRET1", "<redacted>")
+    )
+    assert "SECRET1" not in text and "uid <redacted> here" in text
+
+
+def test_jsonl_export_one_object_per_record():
+    import json
+
+    rows = _export_rows()
+    for r in rows:
+        r["payload"]["snapshot"] = kit.snap(life=(20, 14))
+    out = gamelog.render_jsonl(rows, lambda s: s)
+    lines = out.splitlines()
+    assert len(lines) == 3 and out.endswith("\n")
+    keys = {"seq", "ts", "turn", "step", "phase", "actor", "action", "detail", "life", "reasoning"}
+    for line in lines:
+        obj = json.loads(line)
+        assert set(obj) == keys
+        assert obj["life"] == {"a": 20, "b": 14}
+    assert json.loads(lines[2])["actor"] == "b"
+    assert gamelog.render_jsonl([], lambda s: s) == ""
+
+
+def test_jsonl_export_scrubs_every_string_value():
+    rows = [kit.row(1, "cast", card="SECRET1", reasoning="SECRET1 x")]
+    out = gamelog.render_jsonl(rows, lambda s: s.replace("SECRET1", "<redacted>"))
+    assert "SECRET1" not in out and "<redacted>" in out

@@ -1562,3 +1562,99 @@ def test_log_hostile_reasoning_stays_one_why_line_of_ascii(fake_registry):
     assert "why: after" in out["lines"]
     _assert_no_uids(out, uids)
     _finish(manager, match_id)
+
+
+# -- S-69: export --
+
+
+def test_export_md_and_jsonl_for_a_finished_match(fake_registry):
+    manager = _manager()
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    uids = list(manager._matches[match_id].uids.values())
+    game_id = _game_id(manager, match_id)
+    _cast(game_id, reasoning="face " + uids[0])
+    _cast(game_id, reasoning="again")
+    _finish(manager, match_id)
+    from magic_cards_model_api.store import store
+
+    body, media = manager.export(match_id, "md")
+    assert media == "text/markdown; charset=utf-8" and match_id in body
+    assert 'cast "Lightning Bolt"' in body and "<redacted>" in body
+    jbody, jmedia = manager.export(match_id, "jsonl")
+    assert jmedia == "application/x-ndjson"
+    assert len(jbody.splitlines()) == len(store.records(game_id))
+    for text in (body, jbody):
+        for uid in uids:
+            assert uid not in text and uid[:8] not in text
+    body.encode("ascii")
+
+
+def test_export_for_a_match_without_a_game(fake_registry, monkeypatch):
+    import threading
+
+    gate = threading.Event()
+    _gated_boot(monkeypatch, gate, fail=RuntimeError("boom"))
+    manager = _manager()
+    match_id = manager.start(RED, GREEN, seed=1)["match_id"]
+    gate.set()
+    _wait(manager, match_id)
+    body, _ = manager.export(match_id, "md")
+    assert body.startswith(f"# Claude match {match_id}") and "## Turn" not in body
+    assert manager.export(match_id, "jsonl")[0] == ""
+
+
+def test_export_of_a_match_cancelled_while_starting(fake_registry, monkeypatch):
+    import threading
+
+    gate = threading.Event()
+    _gated_boot(monkeypatch, gate)
+    manager = _manager()
+    match_id = manager.start(RED, GREEN, seed=1)["match_id"]
+    manager.cancel(match_id)
+    assert "cancelled" in manager.export(match_id, "md")[0]
+    gate.set()
+    _wait(manager, match_id)
+
+
+def test_export_of_a_row_only_match(fake_registry):
+    from datetime import UTC, datetime
+
+    _put_row("claude-rowonly-exp", "failed", datetime.now(UTC), datetime.now(UTC), game_id=None)
+    manager = _manager()
+    body, _ = manager.export("claude-rowonly-exp", "md")
+    assert body.startswith("# Claude match claude-rowonly-exp") and "failed" in body
+    assert manager.export("claude-rowonly-exp", "jsonl")[0] == ""
+
+
+def test_export_of_a_row_only_match_reads_the_ledger(fake_registry):
+    manager = _manager()
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    _cast(_game_id(manager, match_id), reasoning="face")
+    _finish(manager, match_id)
+    manager.flush_persist()
+    body, _ = _manager().export(match_id, "md")  # a restarted process: only the row is known
+    assert 'cast "Lightning Bolt"' in body and "why: face" in body
+
+
+def test_export_refuses_an_unknown_match_and_a_bad_format(fake_registry):
+    from magic_cards_model_api.sim.manager import SimRefused
+
+    manager = _manager()
+    with pytest.raises(SimRefused, match="(?i)no claude match"):
+        manager.export("claude-nope", "md")
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    with pytest.raises(SimRefused, match="md"):
+        manager.export(match_id, "pdf")
+    _finish(manager, match_id)
+
+
+def test_cancel_and_wait_answers_carry_the_export_handle(fake_registry, monkeypatch):
+    monkeypatch.setenv("API_SERVICE_URL", "http://api.test")
+    manager = _manager()
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    cancelled = manager.cancel(match_id)
+    handle = cancelled["export"]
+    assert handle["markdown"] == f"http://api.test/sim/matches/{match_id}/export.md"
+    assert handle["jsonl"].endswith(f"/sim/matches/{match_id}/export.jsonl")
+    assert "$MTG_SIM_TOKEN" in handle["fetch"]
+    assert manager.wait_answer(match_id)["export"] == handle

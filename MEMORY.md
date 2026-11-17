@@ -3657,3 +3657,11 @@ Retroactive audit (2026-09-26) of every change to pre-existing test content in a
   and `CancelledError` is never caught, so a dropped client ends the coroutine without touching
   the match. The newest line is read with `_log_lines_for(since_seq=max_seq - 1)` because
   since_seq=N answers the rows after N. The tool passes `tick_s=min(1, heartbeat)`.
+- 2026-11-17 (S-69, T-554): export is HTTP only (Q5 B). The two routes are added to the Starlette
+  app returned by `streamable_http_app` in `SimMount.lifespan`, so `SimAuth` guards them exactly
+  like `/sim/mcp`; the tool answers the URL, never the text. `render_jsonl(rows, scrub)` has no
+  `names` parameter (no consumer). Markdown reuses `project(reason_max=None)` and drops its
+  per-turn header lines (the `## Turn n (active p)` heading replaces them; the active player
+  comes from the rows). Secrets are removed per substring (`_scrubber`), never by replacing the
+  document. A match with no ledger exports its header plus a note, never a 500; only an unknown
+  id is a 404. `_read_ledger` is the one ledger read shared by the log projection and export.
