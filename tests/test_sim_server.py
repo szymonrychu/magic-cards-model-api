@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 from mcp.client import Client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.server.mcpserver import Context
+from sim_claude_kit import fake_registry as fixture_registry
 
 from magic_cards_model_api.main import app
 from magic_cards_model_api.sim.config import SimLimits
@@ -39,6 +40,7 @@ INIT = {
     },
 }
 MCP_HEADERS = {"Accept": "application/json, text/event-stream"}
+fake_registry = fixture_registry  # the fixture, bound under the name tests request
 
 
 @pytest.fixture
@@ -416,3 +418,60 @@ def test_progress_notifications_stream_over_the_sim_mount(monkeypatch):
     assert not result.is_error
     assert [p for p, _ in seen] == [1, 2, 3]
     assert seen[0][1] == "tick 1"
+
+
+def test_wait_streams_heartbeats_and_returns_over_http(monkeypatch, fake_registry):
+    from sim_claude_kit import GREEN, RED, _end_game, _game_id, _start
+
+    from magic_cards_model_api.sim.claude import ClaudeMatchManager
+
+    limits = SimLimits.from_env({"MTG_SIM_WAIT_HEARTBEAT_S": "0.2"})
+    manager = SandboxManager(limits)
+    claude_manager = ClaudeMatchManager(limits)
+    server = build_sim_server(manager, limits, claude=claude_manager)
+    match_id = _start(claude_manager, RED, GREEN, seed=1)["match_id"]
+    game_id = _game_id(claude_manager, match_id)
+
+    def concede() -> None:
+        _end_game(game_id, "b")
+        claude_manager.reap()
+
+    seen: list[tuple[float, str | None]] = []
+
+    async def on_progress(progress, total, message):
+        seen.append((progress, message))
+
+    async def drive(url: str) -> Any:
+        http = httpx2.AsyncClient(headers={"Authorization": "Bearer t0k"}, timeout=30)
+        async with http, Client(streamable_http_client(url, http_client=http)) as client:
+            return await client.call_tool(
+                "sim_match_claude_wait", {"match_id": match_id}, progress_callback=on_progress
+            )
+
+    timer = threading.Timer(1.0, concede)
+    with progress_app(monkeypatch, server, manager, claude=claude_manager) as url:
+        timer.start()
+        try:
+            result = asyncio.run(drive(url))
+        finally:
+            timer.join()
+    assert not result.is_error
+    assert len(seen) >= 3
+    assert seen[0][1] is not None and seen[0][1].startswith("waiting:")
+    assert [p for p, _ in seen] == sorted({p for p, _ in seen})
+    answer = json.loads(result.content[0].text)
+    assert answer["status"] == "done" and answer["match_id"] == match_id
+    assert answer["log"]["format"] == "compact-v1"
+
+
+def test_wait_tool_declares_max_result_size(sim):
+    tools = {t.name: t for t in asyncio.run(sim.list_tools())}
+    meta = tools["sim_match_claude_wait"].meta or {}
+    assert meta.get("anthropic/maxResultSizeChars") == 60000
+
+
+def test_wait_tool_refuses_a_non_positive_max_wait(sim):
+    out = call(sim, "sim_match_claude_wait", match_id="claude-nope", max_wait_s=0)
+    assert "max_wait_s" in out["error"]
+    out = call(sim, "sim_match_claude_wait", match_id="claude-nope")
+    assert "No Claude match" in out["error"]

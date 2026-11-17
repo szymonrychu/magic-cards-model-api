@@ -189,6 +189,28 @@ def _finish(manager, match_id: str) -> None:
     assert manager.status(match_id)["status"] == "done"
 
 
+def _put_row(match_id: str, status: str, started, finished=None, **kw):
+    from magic_cards_model_api.store import store
+
+    row = {
+        "match_id": match_id,
+        "game_id": None,
+        "decks": {"a": "Red", "b": "Green"},
+        "seed": 7,
+        "seats": {"a": dict(OPUS_LOW), "b": dict(OPUS_LOW)},
+        "status": status,
+        "error": None,
+        "result": None,
+        "started_at": started,
+        "finished_at": finished,
+        "last_seq": None,
+        "last_progress_at": None,
+        "stalled_reason": None,
+    }
+    row.update(kw)
+    store.put_sim_claude_match(row)
+
+
 def _gated_boot(monkeypatch, gate, fail: BaseException | None = None):
     """Make `boot_decklist_game` block on `gate` (then boot for real, or raise `fail`)."""
     from magic_cards_model_api import decks_api

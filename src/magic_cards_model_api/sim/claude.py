@@ -96,6 +96,22 @@ STALL_SECONDS = Gauge(
 
 
 _EPOCH = datetime.min.replace(tzinfo=UTC)
+STALLED_NOTE = (
+    "the match is stalled; call sim_match_claude_cancel(match_id) or"
+    " sim_match_claude_wait(match_id) again"
+)
+
+
+@dataclass(frozen=True)
+class WaitTick:
+    """What `sim_match_claude_wait` reports between reads: the cached status, and with a log
+    read the newest record's seq and its compact line (`None` when nothing is new)."""
+
+    status: str
+    turn: int | None
+    step: str | None
+    last_seq: int | None
+    newest_line: str | None
 
 
 def _count(status: str) -> None:
@@ -470,6 +486,79 @@ class ClaudeMatchManager:
             text = f"{text}\n{stall}" if text else stall
         out["lines"] = text  # scrubbed per line above; redact() would blank the whole log
         return out
+
+    def wait_tick(self, match_id: str, read_log: bool, after_seq: int = 0) -> WaitTick:
+        """The wait loop's view of a match. `read_log=False` reads the in-memory cache only (a
+        match this process does not hold answers its row status); `read_log=True` also reads
+        the newest record seq and, when it is above `after_seq`, that record's compact line."""
+        match, row = self._game_ref(match_id)
+        if match is None:
+            assert row is not None
+            return WaitTick(row["status"], None, None, row.get("last_seq"), None)
+        with match.lock:
+            status, turn, step = match.status, match.turn, match.step
+            last_seq, game_id = match.last_seq, match.game_id
+        if not read_log:
+            return WaitTick(status, turn, step, last_seq, None)
+        newest = self._max_seq(game_id)
+        if newest is None:
+            return WaitTick(status, turn, step, last_seq, None)
+        line = None
+        if newest > after_seq:
+            # since_seq=N answers the rows after N, so the newest row needs N = newest - 1.
+            flt = LogFilter(board="none")
+            lines = self._log_lines_for(game_id, match.secrets(), flt, since_seq=newest - 1)
+            actions = [x for x in lines if not x.header]
+            line = actions[-1].text if actions else None
+        return WaitTick(status, turn, step, newest, line)
+
+    def wait_answer(self, match_id: str) -> dict[str, Any]:
+        """The answer of `sim_match_claude_wait`: the result, the seats and the compact log
+        (head and tail within `WAIT_LOG_MAX_CHARS`), redacted with the match secrets."""
+        match, row = self._game_ref(match_id)
+        if match is not None:
+            base = self._answer(match)
+            with match.lock:
+                game_id, stalled_reason = match.game_id, match.stalled_reason
+            secrets = match.secrets()
+        else:
+            assert row is not None
+            base = self._answer_from_row(row)
+            game_id, stalled_reason = row.get("game_id"), row.get("stalled_reason")
+            secrets = []  # the seat uids are gone with the process
+        result = base.get("result") or {}
+        status = base["status"]
+        lines = self._log_lines_for(game_id, secrets, LogFilter())
+        kept, truncated = gamelog.head_tail(lines, gamelog.WAIT_LOG_MAX_CHARS)
+        marker = next((x for x in kept if x.header and x.text.startswith("... ")), None)
+        total = self._max_seq(game_id)
+        out: dict[str, Any] = {
+            "match_id": match_id,
+            "status": status,
+            "winner": result.get("winner"),
+            "drawn": result.get("drawn"),
+            "turns": result.get("turns", base.get("turn")),
+            "error": base.get("error"),
+            "stalled_reason": stalled_reason,
+            "duration_s": base["elapsed_s"],
+            "seats": {
+                seat: {"deck": base["decks"][seat], **base["seats"][seat]} for seat in _SEATS
+            },
+            "log": {
+                "format": gamelog.FORMAT,
+                "lines": gamelog.render(kept),
+                "first_seq": kept[0].seq if kept else None,
+                "last_seq": (kept[-1].end_seq or kept[-1].seq) if kept else None,
+                "total_rows": total or 0,
+                "truncated": truncated,
+                "next_seq": marker.seq if truncated and marker is not None else None,
+            },
+            **{key: value for key, value in base.items() if key.startswith("support_")},
+        }
+        if status == "stalled":
+            out["note"] = STALLED_NOTE
+        # The lines are scrubbed per line already, so this blanks no log text.
+        return redact(out, secrets)
 
     def list(self, limit: int = 10) -> dict[str, Any]:
         """Recent matches, newest first: persisted rows, with a match held in memory

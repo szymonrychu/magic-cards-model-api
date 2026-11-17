@@ -678,7 +678,7 @@ environment, no database and a memory cap.
 - Reach: in-cluster only. `/sim` is denied at the public ingresses like `/metrics`.
 - Tools: `sim_card_lookup`, `sim_new`, `sim_state`, `sim_legal_actions`, `sim_act`, `sim_snapshot`, `sim_restore`,
   `sim_run_script`, `sim_import_mtgo_log`, `sim_review_mtgo_log`, `sim_end`, `sim_match_claude_start`, `sim_match_claude_status`,
-  `sim_match_claude_cancel`, `sim_match_log`; and,
+  `sim_match_claude_wait`, `sim_match_claude_cancel`, `sim_match_log`; and,
   only when `MTG_SIM_BASELINE_ENABLED` is set, `sim_play_new`, `sim_match`, `sim_match_status`.
   The engine baseline AI is off as an opponent by default: with the flag unset those three tools
   are not registered and `BatchManager.start` / `SandboxManager.new(mode="play")` refuse with a
@@ -782,6 +782,16 @@ environment, no database and a memory cap.
   `sim_match_claude_status(match_id)` answers from the last background check (every 30 s). One
   match at a time. A game takes about 33-55 min, and the match is bounded by the seat deadline
   (`MTG_SIM_CLAUDE_DEADLINE_S`), not by the engine-only batch cap.
+  `sim_match_claude_wait(match_id, max_wait_s=None)` is the one call to make after the start: it
+  blocks until the match ends, is `stalled` (answered with `stalled_reason` and a note: cancel it
+  or wait again) or `max_wait_s` passes (answered `running` with `waited_s` and a note), and
+  returns the result (`winner`, `drawn`, `turns`, `error`, `duration_s`, `seats`) plus the
+  `compact-v1` log (head and tail within 45000 characters; `truncated` and `next_seq` page the cut
+  middle with `sim_match_log`). While it waits it sends MCP progress: one notification at once,
+  the newest action line at most every 5 s when there are new records, and a heartbeat every
+  `MTG_SIM_WAIT_HEARTBEAT_S` otherwise, so the client's 5-minute idle window never closes. It is
+  the only call allowed past the call timeout; it declares `anthropic/maxResultSizeChars` 60000.
+  A terminal match answers at once, and re-issuing it after a broken stream answers the same.
   `sim_match_claude_cancel(match_id, reason=None)` stops a starting, running or stalled match
   (seats stopped, game deleted, slot freed, status `cancelled`) and answers the last 20 log lines
   as `log_tail`; a finished match answers its final status unchanged.
@@ -822,6 +832,7 @@ environment, no database and a memory cap.
   | `MTG_SIM_RESULT_TTL_S` | 86400 | how long finished batch and match results are kept |
   | `MTG_SIM_LOG_RETENTION_S` | 2592000 (30 days) | how long a finished match's status, log and export stay readable |
   | `MTG_SIM_MAX_SNAPSHOTS` | 16 | snapshots per sandbox (`sim_snapshot`) |
+  | `MTG_SIM_WAIT_HEARTBEAT_S` | 60 | heartbeat interval of `sim_match_claude_wait` (above 0, below the 300 s client idle window) |
 
 ### Preset entry (operator)
 

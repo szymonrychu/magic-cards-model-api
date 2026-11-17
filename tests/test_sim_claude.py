@@ -15,6 +15,7 @@ from sim_claude_kit import (
     _game_id,
     _gated_boot,
     _manager,
+    _put_row,
     _start,
     _tool_server,
     _wait,
@@ -840,28 +841,6 @@ def test_cancel_tool_is_listed_and_answers_text(fake_registry):
 
 
 # -- S-69: persistence --
-
-
-def _put_row(match_id: str, status: str, started, finished=None, **kw):
-    from magic_cards_model_api.store import store
-
-    row = {
-        "match_id": match_id,
-        "game_id": None,
-        "decks": {"a": "Red", "b": "Green"},
-        "seed": 7,
-        "seats": {"a": dict(OPUS_LOW), "b": dict(OPUS_LOW)},
-        "status": status,
-        "error": None,
-        "result": None,
-        "started_at": started,
-        "finished_at": finished,
-        "last_seq": None,
-        "last_progress_at": None,
-        "stalled_reason": None,
-    }
-    row.update(kw)
-    store.put_sim_claude_match(row)
 
 
 def test_start_and_finish_write_the_row(fake_registry):

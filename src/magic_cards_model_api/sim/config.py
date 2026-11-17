@@ -45,6 +45,8 @@ DEFAULT_CLAUDE_MODELS = (
     "claude-sonnet-5",
     "claude-haiku-4-5",
 )
+#: Claude Code drops a streamable HTTP call that sends nothing for 5 minutes.
+WAIT_IDLE_WINDOW_S = 300
 
 
 @dataclass(frozen=True)
@@ -69,6 +71,7 @@ class SimLimits:
     claude_models: tuple[str, ...]
     max_snapshots: int
     log_retention_s: float
+    wait_heartbeat_s: float
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> SimLimits:
@@ -78,6 +81,12 @@ class SimLimits:
         if stall_abort_s <= stall_s:
             raise ValueError(
                 "MTG_SIM_CLAUDE_STALL_ABORT_S must be greater than MTG_SIM_CLAUDE_STALL_S"
+            )
+        heartbeat_s = _number(env, "MTG_SIM_WAIT_HEARTBEAT_S", 60, float)
+        if not 0 < heartbeat_s < WAIT_IDLE_WINDOW_S:
+            raise ValueError(
+                "MTG_SIM_WAIT_HEARTBEAT_S must be above 0 and below 300 s: a wait that sends"
+                " nothing for the 5-minute client idle window is dropped"
             )
         return cls(
             token=env.get("MTG_SIM_TOKEN") or None,
@@ -100,4 +109,5 @@ class SimLimits:
             claude_models=_names(env, "MTG_SIM_CLAUDE_MODELS", DEFAULT_CLAUDE_MODELS),
             max_snapshots=_number(env, "MTG_SIM_MAX_SNAPSHOTS", 16, int),
             log_retention_s=_number(env, "MTG_SIM_LOG_RETENTION_S", 2592000, float),
+            wait_heartbeat_s=float(heartbeat_s),
         )

@@ -132,3 +132,11 @@ def test_stall_windows_default_and_validation():
     assert (lim.claude_stall_s, lim.claude_stall_abort_s) == (900.0, 1800.0)
     with pytest.raises(ValueError, match="MTG_SIM_CLAUDE_STALL_ABORT_S must be greater"):
         SimLimits.from_env({"MTG_SIM_CLAUDE_STALL_S": "600", "MTG_SIM_CLAUDE_STALL_ABORT_S": "600"})
+
+
+def test_wait_heartbeat_default_and_bounds():
+    assert SimLimits.from_env({}).wait_heartbeat_s == 60.0
+    assert SimLimits.from_env({"MTG_SIM_WAIT_HEARTBEAT_S": "0.2"}).wait_heartbeat_s == 0.2
+    for bad in ("0", "300", "-1"):
+        with pytest.raises(ValueError, match="5-minute"):
+            SimLimits.from_env({"MTG_SIM_WAIT_HEARTBEAT_S": bad})

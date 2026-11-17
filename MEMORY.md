@@ -3645,3 +3645,15 @@ Retroactive audit (2026-09-26) of every change to pre-existing test content in a
   terminal row. `flush_persist(timeout)` is the deterministic test hook; `shutdown()` flushes
   (bounded) and stops it, called from the app lifespan. Reads (list, status/cancel of an unheld
   id) stay direct: the records ledger shares the DB, so a hung DB already stops the game.
+- 2026-11-17 (S-69, T-553): Claude-match delivery is one blocking `sim_match_claude_wait` (Q1 A)
+  because MCP delivers a tool result only as the tools/call response (no tasks extension, no
+  push). Heartbeats every `MTG_SIM_WAIT_HEARTBEAT_S` (60 s, must stay below 300) keep Claude
+  Code's 5-minute HTTP idle window open, and the first notification is sent at once to meet its
+  60 s first-byte timer. The progress value is a notification counter, not the last seq: MCP
+  progress must increase and a heartbeat carries no new seq; the message carries the content
+  (the newest compact line, read at most every 5 s). The wait returns on `stalled` too (Q6 A)
+  with the reason and a note, so a hung match never pins the caller. `wait_tick(read_log=False)`
+  is pure memory and runs on the event loop; every store read goes through `asyncio.to_thread`,
+  and `CancelledError` is never caught, so a dropped client ends the coroutine without touching
+  the match. The newest line is read with `_log_lines_for(since_seq=max_seq - 1)` because
+  since_seq=N answers the rows after N. The tool passes `tick_s=min(1, heartbeat)`.
