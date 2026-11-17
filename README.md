@@ -678,7 +678,8 @@ environment, no database and a memory cap.
 - Reach: in-cluster only. `/sim` is denied at the public ingresses like `/metrics`.
 - Tools: `sim_card_lookup`, `sim_new`, `sim_state`, `sim_legal_actions`, `sim_act`, `sim_snapshot`, `sim_restore`,
   `sim_run_script`, `sim_import_mtgo_log`, `sim_review_mtgo_log`, `sim_end`, `sim_match_claude_start`, `sim_match_claude_status`,
-  `sim_match_claude_wait`, `sim_match_claude_cancel`, `sim_match_log`, `sim_match_claude_export`; and,
+  `sim_match_claude_wait`, `sim_match_claude_cancel`, `sim_match_log`, `sim_match_claude_export`,
+  `sim_match_claude_list`; and,
   only when `MTG_SIM_BASELINE_ENABLED` is set, `sim_play_new`, `sim_match`, `sim_match_status`.
   The engine baseline AI is off as an opponent by default: with the flag unset those three tools
   are not registered and `BatchManager.start` / `SandboxManager.new(mode="play")` refuse with a
@@ -815,7 +816,7 @@ environment, no database and a memory cap.
   `sim_match_claude_list(limit=10)` lists recent matches (1-50, newest first) from the persisted
   table: `match_id`, `status`, `decks`, `seats`, `started_at`, `finished_at`, `turns`, `winner`,
   `error`; use it to find a `match_id` after a restart or a lost context. Match headers are
-  written through to Postgres and kept `MTG_SIM_LOG_RETENTION_S`, so `sim_match_claude_status`
+  written to Postgres by a background writer (eventually, a failed write is retried) and kept `MTG_SIM_LOG_RETENTION_S`, so `sim_match_claude_status`
   and `sim_match_claude_cancel` still answer after the in-memory result is gone; a restart marks
   every match that was still live as `failed` ("the server restarted during the match; the log
   so far is kept").

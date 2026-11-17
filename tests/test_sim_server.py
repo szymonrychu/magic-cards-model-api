@@ -570,6 +570,18 @@ def test_claude_tool_texts_do_not_ask_for_polling(baseline_off_sim):
     assert texts["sim_match_claude_status"].startswith("Check a Claude-seat match at once")
 
 
+def test_claude_status_text_names_every_status(baseline_off_sim):
+    text = _claude_tool_texts(baseline_off_sim)["sim_match_claude_status"]
+    for status in ("starting", "running", "stalled", "done", "deadline", "failed", "cancelled"):
+        assert re.search(rf"\b{status}\b", text), status
+
+
+def test_readme_tools_bullet_lists_the_claude_list_tool():
+    readme = (Path(__file__).parents[1] / "README.md").read_text()
+    bullet = readme.split("- Tools: ", 1)[1].split("\n- ", 1)[0]
+    assert "`sim_match_claude_list`" in bullet
+
+
 def test_claude_tools_are_all_listed(sim):
     names = {t.name for t in asyncio.run(sim.list_tools())}
     assert names >= {

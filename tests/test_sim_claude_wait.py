@@ -164,6 +164,73 @@ def test_returns_on_stalled_with_reason_and_note(fake_registry):
     _finish(manager, match_id)
 
 
+def _stalled(clock: Clock):
+    manager = _manager(clock)
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    manager.reap()  # the baseline seq
+    clock.now += 901
+    manager.reap()
+    assert manager.status(match_id)["status"] == "stalled"
+    return manager, match_id
+
+
+def test_wait_on_a_stalled_match_blocks_until_max_wait_s(fake_registry):
+    clock = Clock()
+    manager, match_id = _stalled(clock)
+    start = clock.now
+    answer, reports = _run(manager, match_id, clock, max_wait_s=300.0)
+    assert clock.now - start >= 300
+    assert answer["status"] == "stalled"
+    assert answer["note"] == "max_wait_s elapsed; call sim_match_claude_wait(match_id) again"
+    assert len(reports) > 1  # heartbeats while it blocked
+    _finish(manager, match_id)
+
+
+def test_wait_on_a_stalled_match_follows_it_back_to_running_until_terminal(fake_registry):
+    from magic_cards_model_api import audit
+
+    clock = Clock()
+    manager, match_id = _stalled(clock)
+    game_id = _game_id(manager, match_id)
+
+    def progress() -> None:
+        audit.record(game_id, "pass_priority", player="a", reasoning="back")
+        manager.reap()
+        assert manager.status(match_id)["status"] == "running"
+
+    ticks = [_once(30, progress), _once(90, lambda: _finish(manager, match_id))]
+    answer, _ = _run(manager, match_id, clock, on_tick=lambda t: [tick(t) for tick in ticks])
+    assert answer["status"] == "done"
+    assert "note" not in answer
+
+
+def test_wait_on_a_live_row_only_match_answers_at_once_off_the_loop(fake_registry, monkeypatch):
+    from magic_cards_model_api.sim.claude import RESTART_ERROR
+    from magic_cards_model_api.store import store
+
+    _put_row("claude-orphan-wait", "running", datetime.now(UTC))
+    clock = Clock()
+    manager = _manager(clock)
+    on_loop: list[bool] = []
+    read = manager._row
+
+    def row(match_id: str):
+        try:
+            asyncio.get_running_loop()
+            on_loop.append(True)
+        except RuntimeError:
+            on_loop.append(False)
+        return read(match_id)
+
+    monkeypatch.setattr(manager, "_row", row)
+    answer, reports = _run(manager, "claude-orphan-wait", clock, max_wait_s=None)
+    assert answer["status"] == "failed" and answer["error"] == RESTART_ERROR
+    assert len(reports) == 1 and clock.now == 1000.0
+    assert on_loop and not any(on_loop)
+    manager.flush_persist()
+    assert store.get_sim_claude_match("claude-orphan-wait")["status"] == "failed"
+
+
 def test_max_wait_s_returns_running_with_note(fake_registry):
     clock = Clock()
     manager = _manager(clock)

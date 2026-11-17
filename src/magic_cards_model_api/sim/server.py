@@ -398,9 +398,10 @@ def build_sim_server(
             f" progress, failed after {limits.claude_stall_abort_s:g} s; stalled_reason says where"
             " it hangs; running and stalled also answer last_seq and last_progress_s_ago), done"
             " (result: winner a or b or null, drawn, turns, the last 10 log lines), deadline"
-            f" (stopped at the {limits.claude_deadline_s:g} s seat deadline, result so far) or"
-            " failed (error: the start failed, or both seats are gone or in error). On done,"
-            " deadline or failed both seats are stopped and the game deleted;"
+            f" (stopped at the {limits.claude_deadline_s:g} s seat deadline, result so far),"
+            " failed (error: the start failed, or both seats are gone or in error) or cancelled"
+            " (stopped by sim_match_claude_cancel, log kept). On done, deadline, failed or"
+            " cancelled both seats are stopped and the game deleted;"
             f" the result is kept {limits.log_retention_s:g} s. Relay support_warnings to the"
             " user; support_status 'pending' or 'unavailable' means card support is unchecked."
         )

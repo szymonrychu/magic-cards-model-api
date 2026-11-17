@@ -1,4 +1,4 @@
-"""Async Claude-seat sim matches: two kubernetes AI seat Jobs play one game, polled by id.
+"""Async Claude-seat sim matches: two kubernetes AI seat Jobs play one game, known by id.
 
 The game is booted in this process (`decks_api.boot_decklist_game`), both seats AI, owner
 `SIM_OWNER`, outside the lobby (no slot, not listed, not reachable to an OIDC user). `start`
@@ -19,9 +19,9 @@ status-guarded claim under the match lock, the `ended` event, one count on
 stop the seats exactly once.
 
 `status` answers from cached match state only: no cluster read, no lock held across I/O, so a
-poll stays under MTG_SIM_CALL_TIMEOUT_S whatever the cluster does. The reaper (every 30 s) reads
-the seats and the game and applies the transitions; it claims a transition under the match lock
-and runs the cleanup I/O after releasing it.
+status call stays under MTG_SIM_CALL_TIMEOUT_S whatever the cluster does. The reaper (every
+30 s) reads the seats and the game and applies the transitions; it claims a transition under the
+match lock and runs the cleanup I/O after releasing it.
 
 Match rows are written by one background writer thread that coalesces the newest snapshot per
 match and retries a failed write on its next pass; no tool call or reaper pass waits on the
@@ -218,7 +218,7 @@ class ClaudeMatchManager:
             if len(active) >= self._limits.max_claude_matches:
                 oldest = min(active, key=lambda m: m.started)
                 minutes = int((self._clock() - oldest.started) // 60)
-                verb = "running" if oldest.status == "running" else "being started"
+                verb = "being started" if oldest.status == "starting" else oldest.status
                 raise SimRefused(
                     f"A Claude match is already {verb} ({minutes} min elapsed; it is bounded"
                     f" by the {self._limits.claude_deadline_s:g} s seat deadline). Only one"
@@ -664,13 +664,31 @@ class ClaudeMatchManager:
         from magic_cards_model_api.store import store
 
         try:
-            return store.get_sim_claude_match(match_id)
+            row = store.get_sim_claude_match(match_id)
         except Exception as exc:  # noqa: BLE001 - an unreadable row is an unknown match
             logger.warning("claude sim row read failed (%s)", type(exc).__name__)
             return None
+        if row is None or row["status"] not in _LIVE:
+            return row
+        # A live row this process does not hold is an orphan (the restart sweep missed it):
+        # its seats are gone, so it is the restart failure. A snapshot still queued for the
+        # writer is newer than the row and wins.
+        with self._wlock:
+            queued = self._pending.get(match_id)
+            if queued is not None:
+                return dict(queued)
+            row = {
+                **row,
+                "status": "failed",
+                "error": RESTART_ERROR,
+                "finished_at": row.get("finished_at") or self._wall(),
+                "stalled_reason": None,
+            }
+            self._enqueue(row)
+        return dict(row)
 
     def _persist(self, match: _ClaudeMatch) -> None:
-        """Queue the match header row for the background writer (write-through, eventually).
+        """Queue the match header row for the background writer (written eventually).
         Never blocks on the store and never raises: the match runs from memory when the store
         is down. The snapshot is taken here under the match lock (no I/O)."""
         # The snapshot is taken while holding the queue lock (order: _wlock, then match.lock;
@@ -685,7 +703,8 @@ class ClaudeMatchManager:
                     "seats": _seat_echo(match.seat_settings),
                     "status": match.status,
                     "error": match.error,
-                    "result": match.result,
+                    # last_log carries seat reasoning: scrub it so no row ever holds a uid
+                    "result": gamelog.scrub_values(match.result, self._scrubber(match.secrets())),
                     "started_at": match.started_wall,
                     "finished_at": match.finished_wall,
                     "last_seq": match.last_seq,
@@ -887,13 +906,17 @@ class ClaudeMatchManager:
                     rows = rows[1:]
             else:
                 rows = store.records(game_id)
+        except Exception as exc:  # noqa: BLE001 - the answer stands without its log
+            logger.warning("claude sim log read failed (%s)", type(exc).__name__)
+            return None
+        try:
             game = store.get(game_id)
             if game is None:
                 archived = store.archived(game_id)
                 game = archived.game if archived is not None else None
-        except Exception as exc:  # noqa: BLE001 - the answer stands without its log
-            logger.warning("claude sim log read failed (%s)", type(exc).__name__)
-            return None
+        except Exception as exc:  # noqa: BLE001 - GameUnloadable: names fall back to "card"
+            logger.warning("claude sim log names read failed (%s)", type(exc).__name__)
+            game = None
 
         def names(value: str) -> str | None:
             try:

@@ -232,6 +232,17 @@ def test_scrub_replaces_only_the_substring():
     assert action.startswith("#1 T3 main1 a cast")
 
 
+def test_scrub_runs_before_the_300_char_trim():
+    uid = "0123456789abcdef0123456789abcdef"
+    reasoning = "x" * 296 + uid  # the trim at 300 cuts the uid after its first 4 chars
+    rows = [kit.row(1, "cast", card="Shock", reasoning=reasoning)]
+    scrub = lambda s: s.replace(uid, "<redacted>").replace(uid[:8], "<redacted>")  # noqa: E731
+    text = _lines(rows, scrub=scrub)[-1].text
+    reason = text.split("\n")[1][len("   why: ") :]
+    assert uid[:4] not in reason
+    assert reason.startswith("x" * 296 + "<re")
+
+
 def test_projects_a_real_record_ledger():
     from magic_cards_model_api import audit
     from magic_cards_model_api.decks_api import boot_decklist_game

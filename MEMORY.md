@@ -3665,8 +3665,10 @@ Retroactive audit (2026-09-26) of every change to pre-existing test content in a
   comes from the rows). Secrets are removed per substring (`_scrubber`), never by replacing the
   document. A match with no ledger exports its header plus a note, never a 500; only an unknown
   id is a 404. `_read_ledger` is the one ledger read shared by the log projection and export.
-
 - 2026-11-16 (sim game log, S-69): the match export is HTTP-only under `/sim` with the shared bearer (Q5 B): no paged tool text, in-cluster only; `sim_match_claude_export` answers the URL.
 - 2026-11-16 (sim game log): reasoning is the seat's stated `reasoning` only (Q2 A); no transcript capture, so no seat image change.
 - 2026-11-16 (sim game log): the compact-v1 limits (300-char why, 40,000-char log answer, 45,000-char wait head/tail) are constants in `sim/gamelog.py`; re-measure them on the first real match.
 - 2026-11-16 (sim game log): the Claude tool texts no longer ask for polling: start answers `next` (call `sim_match_claude_wait` once) and `poll_every_s` is gone from every answer; status says "check at once (no waiting)". Why: one blocking wait call replaces a 300 s poll loop for the calling agent.
+- 2026-11-17 (S-69 final fix wave): a `sim_match_claude_wait` issued on an already-stalled match blocks until the match leaves stalled (then it is an ordinary wait: returns on terminal or on a new stall) or `max_wait_s`; a wait that saw the match running still returns on the stall (Q6 A). Why: "wait again" must really wait instead of spinning turns. Every wait tick now runs through `asyncio.to_thread`, because a match the process no longer holds is answered from its row (DB I/O).
+- 2026-11-17 (S-69 final fix wave): `_row` treats a live row this process does not hold as an orphan of a missed restart sweep: it answers and queues the row as `failed` with RESTART_ERROR (a snapshot still queued for the writer wins). Why: such a row never ends a wait and is never pruned by retention; its seats are gone with the old process.
+- 2026-11-17 (S-69 final fix wave): `_persist` stores `result` scrubbed per substring with the match secrets (`gamelog.scrub_values`), and `_why` scrubs before the 300-char trim. Why: `last_log` carries seat reasoning, the row outlives the in-memory redaction, and a trim must never leave a uid prefix.

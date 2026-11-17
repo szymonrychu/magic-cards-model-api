@@ -220,10 +220,11 @@ def _delta(prev: dict[str, Any] | None, snap: dict[str, Any] | None, board: str)
     )
 
 
-def _why(reasoning: Any, reason_max: int | None) -> str:
+def _why(reasoning: Any, reason_max: int | None, scrub: Callable[[str], str]) -> str:
+    """The why line; `scrub` runs before the trim so a cut never leaves part of a secret."""
     if not isinstance(reasoning, str):
         return ""
-    text = " ".join(reasoning.split())
+    text = " ".join(scrub(reasoning).split())
     if not text:
         return ""
     if reason_max is not None and len(text) > reason_max:
@@ -360,7 +361,7 @@ def project(
                 snap, separators=(",", ":"), ensure_ascii=True, sort_keys=True
             )
         if flt.reasoning:
-            text += _why(payload.get("reasoning"), reason_max)
+            text += _why(payload.get("reasoning"), reason_max, scrub)
         emit(row, text)
         if snap is not None:
             prev = snap
@@ -453,13 +454,13 @@ def head_tail(
 # -- export ------------------------------------------------------------------------------
 
 
-def _scrub_values(value: Any, scrub: Callable[[str], str]) -> Any:
+def scrub_values(value: Any, scrub: Callable[[str], str]) -> Any:
     if isinstance(value, str):
         return scrub(value)
     if isinstance(value, dict):
-        return {k: _scrub_values(v, scrub) for k, v in value.items()}
+        return {k: scrub_values(v, scrub) for k, v in value.items()}
     if isinstance(value, list | tuple):
-        return [_scrub_values(v, scrub) for v in value]
+        return [scrub_values(v, scrub) for v in value]
     return value
 
 
@@ -570,5 +571,5 @@ def render_jsonl(rows: list[dict[str, Any]], scrub: Callable[[str], str]) -> str
             "life": snapshot.get("life") if snapshot else None,
             "reasoning": payload.get("reasoning"),
         }
-        lines.append(json.dumps(_scrub_values(record, scrub), ensure_ascii=True, sort_keys=True))
+        lines.append(json.dumps(scrub_values(record, scrub), ensure_ascii=True, sort_keys=True))
     return "".join(f"{line}\n" for line in lines)
