@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import re
 import socket
@@ -15,14 +16,17 @@ from typing import Any
 import httpx2
 import pytest
 import uvicorn
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from mcp.client import Client
 from mcp.client.streamable_http import streamable_http_client
+from mcp.server.mcpserver import Context
+from sim_claude_kit import fake_registry as fixture_registry
 
 from magic_cards_model_api.main import app
 from magic_cards_model_api.sim.config import SimLimits
 from magic_cards_model_api.sim.manager import SandboxManager
-from magic_cards_model_api.sim.server import build_sim_server
+from magic_cards_model_api.sim.server import SimMount, build_sim_server
 
 BOLT_SPEC = json.loads((Path(__file__).parent / "fixtures" / "sim" / "bolt_bears.json").read_text())
 INIT = {
@@ -36,6 +40,7 @@ INIT = {
     },
 }
 MCP_HEADERS = {"Accept": "application/json, text/event-stream"}
+fake_registry = fixture_registry  # the fixture, bound under the name tests request
 
 
 @pytest.fixture
@@ -360,3 +365,240 @@ def test_board_photo_guide_is_in_the_instructions_and_the_readme():
         assert "photo" in text
         for step in ("sim_card_lookup", "sim_new", "sim_snapshot", "sim_restore", "library_filler"):
             assert step in text, step
+
+
+@contextlib.contextmanager
+def progress_app(monkeypatch, server, manager, claude=None) -> Iterator[str]:
+    """Serve a fresh SimMount at /sim on a real socket; yield its /sim/mcp URL."""
+    monkeypatch.setenv("MTG_SIM_TOKEN", "t0k")
+    mount = SimMount(server, manager, claude=claude)
+    fastapi_app = FastAPI(lifespan=mount.lifespan)
+    fastapi_app.mount("/sim", mount)
+    port = _free_port()
+    uv = uvicorn.Server(
+        uvicorn.Config(fastapi_app, host="127.0.0.1", port=port, log_level="warning")
+    )
+    thread = threading.Thread(target=uv.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 10
+    while not uv.started and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert uv.started
+    try:
+        yield f"http://127.0.0.1:{port}/sim/mcp"
+    finally:
+        uv.should_exit = True
+        thread.join(timeout=10)
+
+
+def test_progress_notifications_stream_over_the_sim_mount(monkeypatch):
+    limits = SimLimits.from_env({})
+    manager = SandboxManager(limits)
+    server = build_sim_server(manager, limits)
+
+    @server.tool()
+    async def probe_progress(ctx: Context) -> dict[str, Any]:
+        for n in (1, 2, 3):
+            await ctx.report_progress(n, None, f"tick {n}")
+            await asyncio.sleep(0.05)
+        return {"ok": True}
+
+    seen: list[tuple[float, str | None]] = []
+
+    async def on_progress(progress, total, message):
+        seen.append((progress, message))
+
+    async def drive(url: str) -> Any:
+        http = httpx2.AsyncClient(headers={"Authorization": "Bearer t0k"})
+        async with http, Client(streamable_http_client(url, http_client=http)) as client:
+            return await client.call_tool("probe_progress", {}, progress_callback=on_progress)
+
+    with progress_app(monkeypatch, server, manager) as url:
+        result = asyncio.run(drive(url))
+    assert not result.is_error
+    assert [p for p, _ in seen] == [1, 2, 3]
+    assert seen[0][1] == "tick 1"
+
+
+def test_wait_streams_heartbeats_and_returns_over_http(monkeypatch, fake_registry):
+    from sim_claude_kit import GREEN, RED, _end_game, _game_id, _start
+
+    from magic_cards_model_api.sim.claude import ClaudeMatchManager
+
+    limits = SimLimits.from_env({"MTG_SIM_WAIT_HEARTBEAT_S": "0.2"})
+    manager = SandboxManager(limits)
+    claude_manager = ClaudeMatchManager(limits)
+    server = build_sim_server(manager, limits, claude=claude_manager)
+    match_id = _start(claude_manager, RED, GREEN, seed=1)["match_id"]
+    game_id = _game_id(claude_manager, match_id)
+
+    def concede() -> None:
+        _end_game(game_id, "b")
+        claude_manager.reap()
+
+    seen: list[tuple[float, str | None]] = []
+
+    async def on_progress(progress, total, message):
+        seen.append((progress, message))
+
+    async def drive(url: str) -> Any:
+        http = httpx2.AsyncClient(headers={"Authorization": "Bearer t0k"}, timeout=30)
+        async with http, Client(streamable_http_client(url, http_client=http)) as client:
+            return await client.call_tool(
+                "sim_match_claude_wait", {"match_id": match_id}, progress_callback=on_progress
+            )
+
+    timer = threading.Timer(1.0, concede)
+    with progress_app(monkeypatch, server, manager, claude=claude_manager) as url:
+        timer.start()
+        try:
+            result = asyncio.run(drive(url))
+        finally:
+            timer.join()
+    assert not result.is_error
+    assert len(seen) >= 3
+    assert seen[0][1] is not None and seen[0][1].startswith("waiting:")
+    assert [p for p, _ in seen] == sorted({p for p, _ in seen})
+    answer = json.loads(result.content[0].text)
+    assert answer["status"] == "done" and answer["match_id"] == match_id
+    assert answer["log"]["format"] == "compact-v1"
+
+
+def test_wait_tool_declares_max_result_size(sim):
+    tools = {t.name: t for t in asyncio.run(sim.list_tools())}
+    meta = tools["sim_match_claude_wait"].meta or {}
+    assert meta.get("anthropic/maxResultSizeChars") == 60000
+
+
+def test_wait_tool_refuses_a_non_positive_max_wait(sim):
+    out = call(sim, "sim_match_claude_wait", match_id="claude-nope", max_wait_s=0)
+    assert "max_wait_s" in out["error"]
+    out = call(sim, "sim_match_claude_wait", match_id="claude-nope")
+    assert "No Claude match" in out["error"]
+
+
+def test_export_route_needs_the_bearer(monkeypatch):
+    monkeypatch.setenv("MTG_SIM_TOKEN", "t0k")
+    with TestClient(app) as c:
+        assert c.get("/sim/matches/claude-x/export.md").status_code == 401
+        assert c.get("/sim/matches/claude-x/export.jsonl").status_code == 401
+        bad = c.get("/sim/matches/claude-x/export.md", headers={"Authorization": "Bearer no"})
+        assert bad.status_code == 401
+    monkeypatch.delenv("MTG_SIM_TOKEN")
+    with TestClient(app) as c:
+        assert c.get("/sim/matches/claude-x/export.md").status_code == 503
+
+
+def _export_fixture(monkeypatch):
+    from sim_claude_kit import GREEN, RED, _finish, _game_id, _start
+
+    from magic_cards_model_api import audit
+    from magic_cards_model_api.sim.claude import ClaudeMatchManager
+
+    limits = SimLimits.from_env({})
+    manager = SandboxManager(limits)
+    claude_manager = ClaudeMatchManager(limits)
+    server = build_sim_server(manager, limits, claude=claude_manager)
+    match_id = _start(claude_manager, RED, GREEN, seed=1)["match_id"]
+    audit.record(_game_id(claude_manager, match_id), "play_land", player="a", card="Forest")
+    _finish(claude_manager, match_id)
+    return server, manager, claude_manager, match_id
+
+
+def test_export_route_serves_markdown_and_jsonl(monkeypatch, fake_registry):
+    server, manager, claude_manager, match_id = _export_fixture(monkeypatch)
+    root = {"Authorization": "Bearer t0k"}
+    with progress_app(monkeypatch, server, manager, claude=claude_manager) as url:
+        base = url.removesuffix("/mcp")
+        md = httpx2.get(f"{base}/matches/{match_id}/export.md", headers=root)
+        js = httpx2.get(f"{base}/matches/{match_id}/export.jsonl", headers=root)
+        missing = httpx2.get(f"{base}/matches/claude-nope/export.md", headers=root)
+        anon = httpx2.get(f"{base}/matches/{match_id}/export.md")
+    assert md.status_code == 200 and md.headers["content-type"].startswith("text/markdown")
+    assert f'filename="{match_id}.md"' in md.headers["content-disposition"]
+    assert md.text.startswith(f"# Claude match {match_id}")
+    assert js.status_code == 200 and js.headers["content-type"].startswith("application/x-ndjson")
+    assert f'filename="{match_id}.jsonl"' in js.headers["content-disposition"]
+    assert all(json.loads(line)["seq"] for line in js.text.splitlines())
+    assert missing.status_code == 404 and "error" in missing.json()
+    assert anon.status_code == 401
+
+
+def test_export_route_without_a_claude_manager_is_404(monkeypatch):
+    limits = SimLimits.from_env({})
+    manager = SandboxManager(limits)
+    server = build_sim_server(manager, limits)
+    with progress_app(monkeypatch, server, manager) as url:
+        base = url.removesuffix("/mcp")
+        out = httpx2.get(
+            f"{base}/matches/claude-x/export.md", headers={"Authorization": "Bearer t0k"}
+        )
+    assert out.status_code == 404
+
+
+def test_export_tool_answers_the_url_only(monkeypatch, fake_registry):
+    server, _manager, _claude, match_id = _export_fixture(monkeypatch)
+    out = call(server, "sim_match_claude_export", match_id=match_id, format="jsonl")
+    assert out["url"].endswith(f"/sim/matches/{match_id}/export.jsonl")
+    assert out["media_type"] == "application/x-ndjson" and "$MTG_SIM_TOKEN" in out["fetch"]
+    assert "lines" not in out and "body" not in out
+    default = call(server, "sim_match_claude_export", match_id=match_id)
+    assert default["format"] == "markdown" and default["url"].endswith("export.md")
+    bad = call(server, "sim_match_claude_export", match_id=match_id, format="pdf")
+    assert "markdown" in bad["error"] and "jsonl" in bad["error"]
+    assert (
+        "No Claude match" in call(server, "sim_match_claude_export", match_id="claude-no")["error"]
+    )
+
+
+def _claude_tool_texts(server) -> dict[str, str]:
+    tools = asyncio.run(server.list_tools())
+    return {
+        t.name: t.description or ""
+        for t in tools
+        if t.name.startswith("sim_match_claude_") or t.name == "sim_match_log"
+    }
+
+
+def test_claude_tool_texts_do_not_ask_for_polling(baseline_off_sim):
+    texts = _claude_tool_texts(baseline_off_sim)
+    texts["INSTRUCTIONS"] = baseline_off_sim.instructions
+    for name, text in texts.items():
+        assert re.search(r"poll", text, re.I) is None, name
+    assert "sim_match_claude_wait" in texts["sim_match_claude_start"]
+    assert "sim_match_claude_wait" in texts["INSTRUCTIONS"]
+    assert texts["sim_match_claude_status"].startswith("Check a Claude-seat match at once")
+
+
+def test_claude_status_text_names_every_status(baseline_off_sim):
+    text = _claude_tool_texts(baseline_off_sim)["sim_match_claude_status"]
+    for status in ("starting", "running", "stalled", "done", "deadline", "failed", "cancelled"):
+        assert re.search(rf"\b{status}\b", text), status
+
+
+def test_readme_tools_bullet_lists_the_claude_list_tool():
+    readme = (Path(__file__).parents[1] / "README.md").read_text()
+    bullet = readme.split("- Tools: ", 1)[1].split("\n- ", 1)[0]
+    assert "`sim_match_claude_list`" in bullet
+
+
+def test_claude_tools_are_all_listed(sim):
+    names = {t.name for t in asyncio.run(sim.list_tools())}
+    assert names >= {
+        "sim_match_claude_start",
+        "sim_match_claude_status",
+        "sim_match_claude_wait",
+        "sim_match_claude_cancel",
+        "sim_match_claude_list",
+        "sim_match_claude_export",
+        "sim_match_log",
+    }
+
+
+def test_readme_claude_guide_names_the_wait_call():
+    readme = (Path(__file__).resolve().parent.parent / "README.md").read_text()
+    start = readme.index("## Chat simulation MCP")
+    section = readme[start : readme.index("\n## ", start + 1)]
+    assert "sim_match_claude_wait" in section
+    assert "every 300 s" not in section
+    assert "about 300 s" not in section

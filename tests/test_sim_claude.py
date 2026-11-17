@@ -2,12 +2,27 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+import pytest
+from sim_claude_kit import (
+    GREEN,
+    OPUS_LOW,
+    RED,
+    Clock,
+    _assert_no_uids,
+    _call_tool,
+    _end_game,
+    _finish,
+    _game_id,
+    _gated_boot,
+    _manager,
+    _put_row,
+    _start,
+    _tool_server,
+    _wait,
+)
+from sim_claude_kit import fake_registry as fixture_registry
 
-FIXTURES = Path(__file__).parent / "fixtures" / "sim"
-RED = (FIXTURES / "red_burn.txt").read_text()
-GREEN = (FIXTURES / "green_stompy.txt").read_text()
-OPUS_LOW = {"model": "claude-opus-5-5", "effort": "low"}
+fake_registry = fixture_registry  # the fixture, bound under the name tests request
 
 
 def test_boot_decklist_game_registers_no_ui_game():
@@ -34,103 +49,6 @@ import json  # noqa: E402
 import re  # noqa: E402
 from typing import Any  # noqa: E402
 
-import pytest  # noqa: E402
-
-
-class FakeRegistry:
-    """Stands in for `ai_seat.registry`: records start/stop, answers a seat state."""
-
-    def __init__(self) -> None:
-        self.started: list[dict[str, Any]] = []
-        self.stopped: list[str] = []
-        self.state = "thinking"
-        self.states: dict[str, str] = {}  # per-seat override, by player name
-        self.players: dict[str, str] = {}  # uid -> player
-        self.pregame: list[tuple[Any, ...]] = []
-        self.fail_player: str | None = None
-
-    def start(self, **kw: Any) -> dict[str, Any]:
-        self.started.append(kw)
-        self.players[kw["uid"]] = kw["player"]
-        if kw["player"] == self.fail_player:
-            return {"uid": kw["uid"], "mechanism": "fallback", "reason": f"job {kw['uid']} refused"}
-        return {
-            "uid": kw["uid"],
-            "mechanism": "kubernetes",
-            "state": "pending",
-            "job": f"mtg-seat-{kw['game_id'][:8]}-{kw['uid'][:8]}",
-        }
-
-    def status(self, uid: str) -> dict[str, Any]:
-        state = self.states.get(self.players.get(uid, ""), self.state)
-        return {"uid": uid, "mechanism": "kubernetes", "state": state, "job": uid}
-
-    def stop(self, uid: str) -> bool:
-        self.stopped.append(uid)
-        return True
-
-
-class Clock:
-    def __init__(self) -> None:
-        self.now = 1000.0
-
-    def __call__(self) -> float:
-        return self.now
-
-
-@pytest.fixture
-def fake_registry(monkeypatch):
-    from magic_cards_model_api import ai_pregame, ai_seat
-
-    fake = FakeRegistry()
-    monkeypatch.setattr(ai_seat, "registry", fake)
-    monkeypatch.setattr(ai_seat, "ai_seat_mode", lambda: "kubernetes")
-    monkeypatch.setattr(
-        ai_pregame,
-        "start",
-        lambda game_id, players: fake.pregame.append(("start", game_id, tuple(players))),
-    )
-    monkeypatch.setattr(ai_pregame, "stop", lambda game_id: fake.pregame.append(("stop", game_id)))
-    return fake
-
-
-def _manager(clock=None, **env):
-    from magic_cards_model_api.sim.claude import ClaudeMatchManager
-    from magic_cards_model_api.sim.config import SimLimits
-
-    limits = SimLimits.from_env({k: str(v) for k, v in env.items()})
-    return ClaudeMatchManager(limits, clock=clock or Clock())
-
-
-def _wait(manager, match_id: str) -> None:
-    """Join the background boot of a started match."""
-    manager._matches[match_id].booting.join(timeout=30)
-
-
-def _start(manager, *args: Any, **kw: Any) -> dict[str, Any]:
-    out = manager.start(*args, **kw)
-    _wait(manager, out["match_id"])
-    return out
-
-
-def _game_id(manager, match_id: str) -> str:
-    return manager._matches[match_id].game_id
-
-
-def _end_game(game_id: str, loser: str) -> None:
-    from magic_cards_model_api.store import store
-
-    game = store.get(game_id)
-    game.concede(loser, by=loser)
-    store.replace(game_id, game)
-
-
-def _finish(manager, match_id: str) -> None:
-    """End a test match through the engine and let the reaper clean it up."""
-    _end_game(_game_id(manager, match_id), "b")
-    manager.reap()
-    assert manager.status(match_id)["status"] == "done"
-
 
 def test_start_boots_two_ai_seats_outside_the_lobby(fake_registry):
     from magic_cards_model_api.sim.claude import SIM_OWNER
@@ -141,7 +59,8 @@ def test_start_boots_two_ai_seats_outside_the_lobby(fake_registry):
     assert out["status"] == "starting"
     assert re.fullmatch(r"claude-[0-9a-f]{32}", out["match_id"])
     assert out["expected_minutes"] == "33-55 per game"
-    assert out["poll_every_s"] == 300
+    assert "sim_match_claude_wait" in out["next"]
+    assert "poll_every_s" not in out
     game_id = _game_id(manager, out["match_id"])
     assert game_id not in store.ui_games()
     assert store.owner_user_id(game_id) == SIM_OWNER
@@ -236,7 +155,10 @@ def test_deadline_stops_seats_and_reports_deadline(fake_registry):
 
 
 def test_finished_result_dropped_after_ttl(fake_registry):
+    from datetime import UTC, datetime, timedelta
+
     from magic_cards_model_api.sim.manager import SimRefused
+    from magic_cards_model_api.store import store
 
     clock = Clock()
     manager = _manager(clock, MTG_SIM_RESULT_TTL_S=60)
@@ -246,6 +168,10 @@ def test_finished_result_dropped_after_ttl(fake_registry):
     assert manager.status(match_id)["result"]["winner"] == "b"
     clock.now += 61
     manager.reap()
+    manager.flush_persist()
+    assert match_id not in manager.live_ids()  # the memory copy is gone; the row answers
+    assert manager.status(match_id)["result"]["winner"] == "b"
+    store.delete_sim_claude_matches_before(datetime.now(UTC) + timedelta(days=1))
     with pytest.raises(SimRefused):
         manager.status(match_id)
 
@@ -353,21 +279,6 @@ def test_app_lifespan_sweeps_orphaned_claude_games(fake_registry):
 # -- Fix round 1: bounded start, pregame backstop, dead seats ----------------
 
 
-def _gated_boot(monkeypatch, gate, fail: BaseException | None = None):
-    """Make `boot_decklist_game` block on `gate` (then boot for real, or raise `fail`)."""
-    from magic_cards_model_api import decks_api
-
-    real = decks_api.boot_decklist_game
-
-    def boot(*args: Any, **kw: Any):
-        assert gate.wait(30)
-        if fail is not None:
-            raise fail
-        return real(*args, **kw)
-
-    monkeypatch.setattr(decks_api, "boot_decklist_game", boot)
-
-
 def test_start_answers_starting_while_boot_is_slow(fake_registry, monkeypatch):
     import threading
     import time
@@ -381,7 +292,7 @@ def test_start_answers_starting_while_boot_is_slow(fake_registry, monkeypatch):
     out = manager.start(RED, GREEN, seed=1)
     assert time.monotonic() - began < 5
     assert out["status"] == "starting"
-    assert set(out) >= {"match_id", "expected_minutes", "poll_every_s"}
+    assert set(out) >= {"match_id", "expected_minutes", "next"}
     polled = manager.status(out["match_id"])
     assert polled["status"] == "starting"
     assert polled["seats"] == {
@@ -494,26 +405,6 @@ def test_reaper_fails_a_match_whose_seats_are_dead(fake_registry):
 
 
 # -- Final review fix wave: status from cache, start deadline ----------------
-
-
-def _call_tool(server, name: str, **kw: Any) -> dict[str, Any]:
-    result = asyncio.run(server.call_tool(name, kw))
-    return json.loads(str(result.content[0].text))
-
-
-def _tool_server(manager):
-    from magic_cards_model_api.sim.config import SimLimits
-    from magic_cards_model_api.sim.manager import SandboxManager
-    from magic_cards_model_api.sim.server import build_sim_server
-
-    limits = SimLimits.from_env({})
-    return build_sim_server(SandboxManager(limits), limits, claude=manager)
-
-
-def _assert_no_uids(answer: dict[str, Any], uids: Any) -> None:
-    text = json.dumps(answer)
-    for uid in uids:
-        assert uid not in text and uid[:8] not in text
 
 
 def test_status_answers_from_cache_while_a_seat_read_blocks(fake_registry):
@@ -795,3 +686,1044 @@ def test_start_tool_takes_model_effort_and_seat_overrides(fake_registry):
     assert out["seats"]["b"] == {"model": "claude-opus-5-5", "effort": "high"}
     _wait(manager, out["match_id"])
     _finish(manager, out["match_id"])
+
+
+# -- S-69: shared finish path and cancel --
+
+
+def _matches_count(status: str) -> float:
+    from magic_cards_model_api.match_metrics import REGISTRY
+
+    value = REGISTRY.get_sample_value("mtg_sim_claude_matches_total", {"status": status})
+    return value or 0.0
+
+
+def test_cancel_running_match_stops_seats_and_keeps_the_log(fake_registry):
+    from magic_cards_model_api import audit
+    from magic_cards_model_api.store import store
+
+    manager = _manager()
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    game_id = _game_id(manager, match_id)
+    uids = set(store.seat_uids(game_id))
+    audit.record(game_id, "pass_priority", player="a", reasoning="hold")
+    out = manager.cancel(match_id, reason="hung on Emrakul")
+    assert out["status"] == "cancelled"
+    assert out["error"] == "cancelled by caller: hung on Emrakul"
+    assert "a pass" in out["log_tail"]
+    assert sorted(fake_registry.stopped) == sorted(uids)
+    assert store.get(game_id) is None
+    assert any(r["payload"]["action"] == "pass_priority" for r in store.records(game_id))
+    again = _start(manager, RED, GREEN, seed=2)  # the slot is free
+    _finish(manager, again["match_id"])
+
+
+def test_cancel_reason_is_ascii_collapsed_and_trimmed(fake_registry):
+    manager = _manager()
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    out = manager.cancel(match_id, reason="  caf" + chr(0xE9) + " \n\t stuck " + "x" * 300)
+    assert out["error"].startswith("cancelled by caller: cafe stuck x")
+    assert len(out["error"]) == len("cancelled by caller: ") + 200
+    other = _start(manager, RED, GREEN, seed=2)["match_id"]
+    assert manager.cancel(other)["error"] == "cancelled by caller"
+
+
+def test_cancel_while_starting_is_honoured_by_the_start_thread(fake_registry, monkeypatch):
+    import threading
+
+    from magic_cards_model_api.store import store
+
+    gate = threading.Event()
+    _gated_boot(monkeypatch, gate)
+    manager = _manager()
+    match_id = manager.start(RED, GREEN, seed=1)["match_id"]
+    out = manager.cancel(match_id)
+    assert out["status"] == "cancelled"
+    assert out["log_tail"] == ""
+    gate.set()
+    _wait(manager, match_id)
+    assert manager.status(match_id)["status"] == "cancelled"
+    game_id = _game_id(manager, match_id)
+    assert game_id is not None and store.get(game_id) is None
+    assert fake_registry.started == []
+
+
+def test_cancel_terminal_match_is_a_noop(fake_registry):
+    manager = _manager()
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    _finish(manager, match_id)
+    stopped = len(fake_registry.stopped)
+    before = manager.status(match_id)
+    out = manager.cancel(match_id, reason="too late")
+    assert out["status"] == "done"
+    assert out.get("error") == before.get("error")
+    assert len(fake_registry.stopped) == stopped
+
+
+def test_cancel_unknown_match_refused(fake_registry):
+    from magic_cards_model_api.sim.manager import SimRefused
+
+    with pytest.raises(SimRefused, match="No Claude match"):
+        _manager().cancel("claude-nope")
+
+
+@pytest.mark.parametrize(
+    ("path", "status"),
+    [("done", "done"), ("deadline", "deadline"), ("dead", "failed"), ("cancel", "cancelled")],
+)
+def test_every_terminal_path_sets_ended_and_counts_once(fake_registry, path, status):
+    clock = Clock()
+    manager = _manager(clock, MTG_SIM_CLAUDE_DEADLINE_S=600)
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    match = manager._matches[match_id]
+    assert not match.ended.is_set()
+    before = _matches_count(status)
+    if path == "done":
+        _end_game(_game_id(manager, match_id), "b")
+        manager.reap()
+    elif path == "deadline":
+        clock.now += 601
+        manager.reap()
+    elif path == "dead":
+        fake_registry.state = "gone"
+        manager.reap()
+    else:
+        manager.cancel(match_id)
+    assert manager.status(match_id)["status"] == status
+    assert match.ended.is_set()
+    assert _matches_count(status) == before + 1
+    manager.reap()
+    manager.cancel(match_id)
+    assert _matches_count(status) == before + 1
+
+
+def test_cancel_racing_the_reaper_claims_once(fake_registry):
+    import threading
+
+    from magic_cards_model_api.store import store
+
+    manager = _manager()
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    game_id = _game_id(manager, match_id)
+    uids = list(store.seat_uids(game_id))
+    before = _matches_count("done") + _matches_count("cancelled")
+    _end_game(game_id, "b")
+    barrier = threading.Barrier(2)
+
+    errors: list[BaseException] = []
+
+    def run(call):
+        try:
+            barrier.wait(10)
+            call()
+        except BaseException as exc:  # noqa: BLE001 - surfaced by the assert below
+            errors.append(exc)
+
+    threads = [
+        threading.Thread(target=run, args=(manager.reap,)),
+        threading.Thread(target=run, args=(lambda: manager.cancel(match_id),)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(30)
+        assert not thread.is_alive()
+    assert errors == []
+    assert manager.status(match_id)["status"] in {"done", "cancelled"}
+    assert _matches_count("done") + _matches_count("cancelled") == before + 1
+    assert sorted(fake_registry.stopped) == sorted(uids)
+
+
+def test_cancel_tool_is_listed_and_answers_text(fake_registry):
+    from magic_cards_model_api.store import store
+
+    manager = _manager()
+    server = _tool_server(manager)
+    assert "error" in _call_tool(server, "sim_match_claude_cancel", match_id="claude-nope")
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    uids = list(store.seat_uids(_game_id(manager, match_id)))
+    out = _call_tool(server, "sim_match_claude_cancel", match_id=match_id, reason="stop")
+    assert out["status"] == "cancelled"
+    assert isinstance(out["log_tail"], str)
+    _assert_no_uids(out, uids)
+
+
+# -- S-69: persistence --
+
+
+def test_start_and_finish_write_the_row(fake_registry):
+    from magic_cards_model_api.store import store
+
+    manager = _manager()
+    out = _start(manager, RED, GREEN, seed=1)
+    mid = out["match_id"]
+    game_id = _game_id(manager, mid)
+    uids = list(store.seat_uids(game_id))
+    manager.flush_persist()
+    row = store.get_sim_claude_match(mid)
+    assert row["status"] == "running"
+    assert row["decks"] == out["decks"] and row["seed"] == 1
+    assert row["seats"] == out["seats"] and row["game_id"] == game_id
+    assert row["finished_at"] is None
+    _finish(manager, mid)
+    manager.flush_persist()
+    row = store.get_sim_claude_match(mid)
+    assert row["status"] == "done" and row["result"]["winner"] == "a"
+    assert row["finished_at"] is not None
+    text = json.dumps(row, default=str)
+    for uid in uids:
+        assert uid not in text and uid[:8] not in text
+
+
+def test_persisted_result_never_holds_a_seat_uid(fake_registry):
+    from magic_cards_model_api import audit
+    from magic_cards_model_api.store import store
+
+    clock = Clock()
+    manager = _manager(clock, MTG_SIM_RESULT_TTL_S=100)
+    mid = _start(manager, RED, GREEN, seed=1)["match_id"]
+    game_id = _game_id(manager, mid)
+    uids = list(store.seat_uids(game_id))
+    audit.record(game_id, "play_land", player="a", card="Forest", reasoning=f"me {uids[0]}")
+    audit.record(game_id, "play_land", player="b", card="Forest", reasoning=f"p {uids[1][:8]}x")
+    _finish(manager, mid)
+    manager.flush_persist()
+    row = store.get_sim_claude_match(mid)
+    assert row["result"]["last_log"]
+    text = json.dumps(row, default=str)
+    for uid in uids:
+        assert uid not in text and uid[:8] not in text
+    assert "<redacted>" in text
+    clock.now += 101
+    manager.reap()
+    manager.flush_persist()
+    assert mid not in manager.live_ids()
+    _assert_no_uids(manager.status(mid), uids)
+
+
+def test_status_falls_back_to_the_row_after_the_result_ttl(fake_registry):
+    clock = Clock()
+    manager = _manager(clock, MTG_SIM_RESULT_TTL_S=100)
+    mid = _start(manager, RED, GREEN, seed=1)["match_id"]
+    _finish(manager, mid)
+    live = manager.status(mid)
+    clock.now += 101
+    manager.reap()
+    manager.flush_persist()
+    assert mid not in manager.live_ids()
+    out = manager.status(mid)
+    assert out["status"] == "done"
+    assert out["result"] == live["result"] and out["decks"] == live["decks"]
+    assert out["seats"] == live["seats"] and out["seed"] == live["seed"]
+
+
+def test_restart_marks_live_rows_failed_with_the_restart_message(fake_registry):
+    from datetime import UTC, datetime
+
+    from magic_cards_model_api.sim.claude import RESTART_ERROR
+
+    _put_row("claude-orphan-1", "running", datetime.now(UTC))
+    manager = _manager()
+    kept = _start(manager, RED, GREEN, seed=1)["match_id"]
+    manager.sweep_orphans()
+    out = manager.status("claude-orphan-1")
+    assert out["status"] == "failed" and out["error"] == RESTART_ERROR
+    assert manager.status(kept)["status"] == "running"
+    _finish(manager, kept)
+
+
+def test_app_lifespan_marks_orphaned_rows_failed(fake_registry):
+    from datetime import UTC, datetime
+
+    from fastapi.testclient import TestClient
+
+    from magic_cards_model_api.main import app
+    from magic_cards_model_api.sim.claude import RESTART_ERROR
+    from magic_cards_model_api.store import store
+
+    _put_row("claude-orphan-2", "running", datetime.now(UTC))
+    with TestClient(app):
+        row = store.get_sim_claude_match("claude-orphan-2")
+    assert row["status"] == "failed" and row["error"] == RESTART_ERROR
+
+
+def test_reap_drops_rows_past_retention(fake_registry, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    from magic_cards_model_api.store import store
+
+    now = [datetime(2026, 11, 16, 12, 0, tzinfo=UTC)]
+    clock = Clock()
+    manager = _manager(clock, wall=lambda: now[0])
+    _put_row("claude-old", "done", now[0] - timedelta(days=32), now[0] - timedelta(days=31))
+    _put_row("claude-new", "done", now[0] - timedelta(days=2), now[0] - timedelta(days=1))
+    calls = []
+    real = store.delete_sim_claude_matches_before
+    monkeypatch.setattr(
+        store, "delete_sim_claude_matches_before", lambda c: calls.append(c) or real(c)
+    )
+    manager.reap()
+    assert store.get_sim_claude_match("claude-old") is None
+    assert store.get_sim_claude_match("claude-new") is not None
+    manager.reap()
+    assert len(calls) == 1
+    clock.now += 3601
+    manager.reap()
+    assert len(calls) == 2
+
+
+def test_persist_failure_does_not_stop_the_match(fake_registry, monkeypatch, caplog):
+    from magic_cards_model_api.store import store
+
+    def down(*a, **kw):
+        raise RuntimeError("db down")
+
+    for name in (
+        "put_sim_claude_match",
+        "get_sim_claude_match",
+        "list_sim_claude_matches",
+        "fail_live_sim_claude_matches",
+        "delete_sim_claude_matches_before",
+    ):
+        monkeypatch.setattr(store, name, down)
+    manager = _manager()
+    manager._persist_retry_s = 0.01
+    server = _tool_server(manager)
+    with caplog.at_level("WARNING"):
+        mid = _start(manager, RED, GREEN, seed=1)["match_id"]
+        assert manager.status(mid)["status"] == "running"
+        _finish(manager, mid)
+        assert not manager.flush_persist(0.3)  # the store is down: the snapshot is kept
+        assert manager.status(mid)["status"] == "done"
+        manager.sweep_orphans()
+        manager.reap()
+        listed = _call_tool(server, "sim_match_claude_list")
+        assert [m["match_id"] for m in listed["matches"]] == [mid]
+        assert "error" in _call_tool(server, "sim_match_claude_status", match_id="claude-none")
+        assert "error" in _call_tool(server, "sim_match_claude_cancel", match_id="claude-none")
+    manager.shutdown(0.3)  # drop the undeliverable snapshot before the store comes back
+    text = caplog.text
+    assert "persist failed (RuntimeError)" in text and "db down" not in text
+
+
+def test_cancel_of_a_persisted_only_match_answers_its_final_status(fake_registry):
+    from datetime import UTC, datetime
+
+    _put_row("claude-rowonly", "done", datetime.now(UTC), datetime.now(UTC), game_id=None)
+    manager = _manager()
+    out = manager.cancel("claude-rowonly", reason="late")
+    assert out["status"] == "done" and out["log_tail"] == ""
+    assert fake_registry.stopped == []
+
+
+def test_list_tool_newest_first(fake_registry):
+    from magic_cards_model_api.store import store
+
+    manager = _manager()
+    server = _tool_server(manager)
+    first = _start(manager, RED, GREEN, seed=1)["match_id"]
+    uids = list(store.seat_uids(_game_id(manager, first)))
+    _finish(manager, first)
+    second = _start(manager, RED, GREEN, seed=2)["match_id"]
+    _finish(manager, second)
+    out = _call_tool(server, "sim_match_claude_list", limit=2)
+    ids = [m["match_id"] for m in out["matches"]]
+    assert ids[:2] == [second, first]
+    entry = out["matches"][1]
+    assert entry["status"] == "done" and entry["winner"] == "a" and entry["turns"] is not None
+    assert set(entry) == {
+        "match_id", "status", "decks", "seats", "started_at", "finished_at",
+        "turns", "winner", "error",
+    }  # fmt: skip
+    _assert_no_uids(out, uids)
+    assert len(_call_tool(server, "sim_match_claude_list", limit=0)["matches"]) == 1
+
+
+# -- S-69: watchdog --
+
+
+def _stalled_manager(**env):
+    clock = Clock()
+    manager = _manager(clock, **env)
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    manager.reap()
+    return clock, manager, match_id
+
+
+def _stall_gauge() -> float:
+    from magic_cards_model_api.match_metrics import REGISTRY
+
+    return REGISTRY.get_sample_value("mtg_sim_claude_stall_seconds") or 0.0
+
+
+def test_no_new_record_for_the_stall_window_marks_stalled_with_a_reason(fake_registry):
+    from magic_cards_model_api.store import store
+
+    clock, manager, match_id = _stalled_manager()
+    assert manager.status(match_id)["status"] == "running"
+    clock.now += 901
+    manager.reap()
+    answer = manager.status(match_id)
+    assert answer["status"] == "stalled"
+    assert answer["stalled_reason"].startswith("no action for 901 s at T")
+    assert "seats a=thinking b=thinking" in answer["stalled_reason"]
+    assert answer["seats"]["a"]["state"] == "thinking"
+    assert answer["checked_s_ago"] == 0.0
+    assert "poll_every_s" not in answer
+    assert answer["last_progress_s_ago"] == 901.0
+    with pytest.raises(Exception, match="(?i)claude match"):
+        manager.start(RED, GREEN, seed=2)
+    manager.flush_persist()
+    assert store.get_sim_claude_match(match_id)["status"] == "stalled"
+    assert store.get_sim_claude_match(match_id)["stalled_reason"] == answer["stalled_reason"]
+    _finish(manager, match_id)
+
+
+def test_reason_names_the_pending_decision(fake_registry, monkeypatch):
+    from types import SimpleNamespace
+
+    from magic_cards_model_api.store import store
+
+    decision = SimpleNamespace(
+        player="a", kind="choose_targets", prompt="Choose targets for Emrakul cast trigger"
+    )
+    monkeypatch.setattr(
+        store, "paused_command", lambda game_id: (None, None, SimpleNamespace(decision=decision))
+    )
+    clock, manager, match_id = _stalled_manager()
+    clock.now += 901
+    manager.reap()
+    reason = manager.status(match_id)["stalled_reason"]
+    assert "pending decision: choose_targets (a): Choose targets for Emrakul cast trigger" in reason
+    _finish(manager, match_id)
+
+
+def test_slot_refusal_names_a_stalled_match_as_stalled(fake_registry):
+    from magic_cards_model_api.sim.manager import SimRefused
+
+    clock, manager, match_id = _stalled_manager()
+    clock.now += 901
+    manager.reap()
+    assert manager.status(match_id)["status"] == "stalled"
+    with pytest.raises(SimRefused, match="already stalled") as refused:
+        manager.start(RED, GREEN, seed=2)
+    assert "being started" not in str(refused.value)
+    _finish(manager, match_id)
+
+
+def test_new_record_returns_a_stalled_match_to_running(fake_registry):
+    from magic_cards_model_api import audit
+    from magic_cards_model_api.store import store
+
+    clock, manager, match_id = _stalled_manager()
+    clock.now += 901
+    manager.reap()
+    assert manager.status(match_id)["status"] == "stalled"
+    seq = audit.record(_game_id(manager, match_id), "pass_priority", player="a", reasoning="ok")
+    manager.reap()
+    answer = manager.status(match_id)
+    assert answer["status"] == "running"
+    assert "stalled_reason" not in answer
+    assert answer["last_seq"] == seq
+    assert answer["last_progress_s_ago"] == 0.0
+    manager.flush_persist()
+    assert store.get_sim_claude_match(match_id)["status"] == "running"
+    assert store.get_sim_claude_match(match_id)["last_seq"] == seq
+    _finish(manager, match_id)
+
+
+def test_stall_abort_fails_the_match_and_frees_the_slot(fake_registry):
+    from magic_cards_model_api.store import store
+
+    clock, manager, match_id = _stalled_manager()
+    game_id = _game_id(manager, match_id)
+    uids = list(store.seat_uids(game_id))
+    clock.now += 1801
+    manager.reap()
+    answer = manager.status(match_id)
+    assert answer["status"] == "failed"
+    assert answer["error"].startswith("aborted after 1800 s without progress: no action for")
+    assert sorted(fake_registry.stopped) == sorted(uids)
+    assert store.get(game_id) is None
+    assert manager._matches[match_id].ended.is_set()
+    _finish(manager, _start(manager, RED, GREEN, seed=2)["match_id"])
+
+
+def test_abort_racing_a_cancel_claims_once(fake_registry):
+    import threading
+
+    from magic_cards_model_api.store import store
+
+    clock, manager, match_id = _stalled_manager()
+    uids = list(store.seat_uids(_game_id(manager, match_id)))
+    clock.now += 1801
+    terminal = ("failed", "cancelled")
+    before = sum(_matches_count(s) for s in terminal)
+    barrier = threading.Barrier(2)
+    errors: list[BaseException] = []
+
+    def run(call):
+        try:
+            barrier.wait(10)
+            call()
+        except BaseException as exc:  # noqa: BLE001 - surfaced by the assert below
+            errors.append(exc)
+
+    threads = [
+        threading.Thread(target=run, args=(manager.reap,)),
+        threading.Thread(target=run, args=(lambda: manager.cancel(match_id),)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(30)
+    assert not any(t.is_alive() for t in threads)
+    assert errors == []
+    assert manager.status(match_id)["status"] in terminal
+    assert sum(_matches_count(s) for s in terminal) == before + 1
+    assert manager._matches[match_id].ended.is_set()
+    assert sorted(fake_registry.stopped) == sorted(uids)
+
+
+def test_a_failed_progress_read_neither_stalls_nor_aborts(fake_registry, monkeypatch):
+    from magic_cards_model_api.store import store
+
+    clock, manager, match_id = _stalled_manager()
+
+    def boom(game_id):
+        raise RuntimeError("store down")
+
+    monkeypatch.setattr(store, "max_record_seq", boom)
+    clock.now += 1801
+    manager.reap()
+    assert manager.status(match_id)["status"] == "running"
+    monkeypatch.undo()
+    _finish(manager, match_id)
+
+
+def test_abort_from_an_already_stalled_match(fake_registry):
+    from magic_cards_model_api.store import store
+
+    clock, manager, match_id = _stalled_manager()
+    uids = list(store.seat_uids(_game_id(manager, match_id)))
+    clock.now += 901
+    manager.reap()
+    assert manager.status(match_id)["status"] == "stalled"
+    stopped_before = len(fake_registry.stopped)
+    clock.now += 900
+    manager.reap()
+    answer = manager.status(match_id)
+    assert answer["status"] == "failed"
+    assert answer["error"].startswith("aborted after 1800 s without progress: no action for")
+    assert len(fake_registry.stopped) == stopped_before + len(uids)
+    assert sorted(fake_registry.stopped) == sorted(uids)
+    manager.reap()
+    assert len(fake_registry.stopped) == stopped_before + len(uids)
+    _finish(manager, _start(manager, RED, GREEN, seed=2)["match_id"])
+
+
+def test_stall_gauge_tracks_the_stalled_match(fake_registry):
+    from magic_cards_model_api import audit
+
+    clock, manager, match_id = _stalled_manager()
+    assert _stall_gauge() == 0
+    clock.now += 901
+    manager.reap()
+    assert _stall_gauge() == 901
+    audit.record(_game_id(manager, match_id), "pass_priority", player="a", reasoning="ok")
+    manager.reap()
+    assert _stall_gauge() == 0
+    _finish(manager, match_id)
+
+
+def test_game_over_wins_over_stall(fake_registry):
+    clock, manager, match_id = _stalled_manager()
+    clock.now += 901
+    manager.reap()
+    assert manager.status(match_id)["status"] == "stalled"
+    _end_game(_game_id(manager, match_id), "b")
+    manager.reap()
+    assert manager.status(match_id)["status"] == "done"
+    assert _stall_gauge() == 0
+
+
+def test_a_hung_store_write_delays_neither_cleanup_nor_the_answers(fake_registry, monkeypatch):
+    import threading
+
+    from magic_cards_model_api.store import store
+
+    release = threading.Event()
+    entered = threading.Event()
+    real = store.put_sim_claude_match
+
+    def hang(row):
+        entered.set()
+        release.wait(10)
+        return real(row)
+
+    manager = _manager()
+    mid = _start(manager, RED, GREEN, seed=1)["match_id"]
+    manager.flush_persist()
+    game_id = _game_id(manager, mid)
+    monkeypatch.setattr(store, "put_sim_claude_match", hang)
+    try:
+        out = manager.cancel(mid, "enough")  # persists the terminal row, which now hangs
+        assert entered.wait(2)
+        assert out["status"] == "cancelled"
+        assert len(fake_registry.stopped) == 2
+        assert store.get(game_id) is None
+        assert manager._find(mid).ended.is_set()
+        assert manager.status(mid)["status"] == "cancelled"
+        assert not manager.flush_persist(0.1)  # still stuck in the write
+        second = _start(manager, GREEN, RED, seed=2)  # the slot is free; start answers at once
+        assert second["status"] == "starting"
+        manager.cancel(second["match_id"])
+    finally:
+        release.set()
+    assert manager.flush_persist(5)
+    assert store.get_sim_claude_match(mid)["status"] == "cancelled"
+    manager.shutdown()
+
+
+def test_a_failed_terminal_write_is_retried_to_the_terminal_status(fake_registry, monkeypatch):
+    from magic_cards_model_api.store import store
+
+    real = store.put_sim_claude_match
+    failures = []
+
+    def flaky(row):
+        if row["status"] == "done" and len(failures) < 2:
+            failures.append(1)
+            raise RuntimeError("db down")
+        return real(row)
+
+    manager = _manager()
+    manager._persist_retry_s = 0.01
+    mid = _start(manager, RED, GREEN, seed=1)["match_id"]
+    manager.flush_persist()
+    monkeypatch.setattr(store, "put_sim_claude_match", flaky)
+    _finish(manager, mid)
+    assert manager.flush_persist(5)
+    assert len(failures) == 2
+    row = store.get_sim_claude_match(mid)
+    assert row["status"] == "done" and row["result"]["winner"] == "a"
+    manager.shutdown()
+
+
+# -- fix round 2: the persist queue never regresses --
+
+
+class _GatedLock:
+    """Delegates to the real lock; the first entry by the gated thread parks until released."""
+
+    def __init__(self, real, gated_thread, arrived, release):
+        self._real, self._thread = real, gated_thread
+        self._arrived, self._release = arrived, release
+        self._used = False
+
+    def __enter__(self):
+        import threading
+
+        if threading.current_thread() is self._thread and not self._used:
+            self._used = True
+            self._arrived.set()
+            assert self._release.wait(5)
+        return self._real.__enter__()
+
+    def __exit__(self, *exc):
+        return self._real.__exit__(*exc)
+
+
+def test_an_older_snapshot_never_overwrites_a_newer_terminal_one(fake_registry):
+    import threading
+
+    from magic_cards_model_api.store import store
+
+    manager = _manager()
+    mid = _start(manager, RED, GREEN, seed=1)["match_id"]
+    manager.flush_persist()
+    match = manager._matches[mid]
+    arrived, release = threading.Event(), threading.Event()
+    older = threading.Thread(target=manager._persist, args=(match,))
+    manager._wlock = _GatedLock(manager._wlock, older, arrived, release)
+    older.start()
+    assert arrived.wait(5)  # the older persist is parked at its enqueue
+    with match.lock:
+        match.status = "done"
+    manager._persist(match)  # the newer, terminal persist goes through first
+    release.set()
+    older.join(5)
+    assert manager.flush_persist()
+    assert store.get_sim_claude_match(mid)["status"] == "done"
+    with match.lock:
+        match.status = "running"  # undo the forced status so the match can end for real
+    _finish(manager, mid)
+
+
+def test_a_terminal_snapshot_is_never_replaced_by_a_live_one(fake_registry):
+    manager = _manager()
+    mid = _start(manager, RED, GREEN, seed=1)["match_id"]
+    manager.flush_persist()
+    with manager._wlock:
+        manager._pending[mid] = {"match_id": mid, "status": "failed"}
+        manager._enqueue({"match_id": mid, "status": "running"})
+        assert manager._pending[mid]["status"] == "failed"
+    manager.shutdown()
+    _finish(manager, mid)
+
+
+# -- S-69: log tool --
+
+
+def _cast(game_id: str, **kw: Any) -> int:
+    from magic_cards_model_api import audit
+
+    return audit.record(game_id, "cast", player="a", card="Lightning Bolt", targets=["b"], **kw)
+
+
+def test_log_reads_a_running_match(fake_registry):
+    from magic_cards_model_api import audit
+
+    manager = _manager()
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    game_id = _game_id(manager, match_id)
+    _cast(game_id, reasoning="face")
+    audit.record(game_id, "pass_priority", player="a", reasoning="hold")
+    audit.record(game_id, "pass_priority", player="b", reasoning="hold")
+    out = manager.log(match_id)
+    assert 'a cast "Lightning Bolt" -> b' in out["lines"]
+    assert "why: face" in out["lines"]
+    assert out["format"] == "compact-v1"
+    assert out["more"] is False
+    assert out["total_rows"] >= 3
+    assert out["match_id"] == match_id and out["status"] == "running"
+    _finish(manager, match_id)
+
+
+def test_log_pages_with_next_seq(fake_registry):
+    from magic_cards_model_api import audit
+
+    manager = _manager()
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    game_id = _game_id(manager, match_id)
+    for i in range(30):
+        audit.record(game_id, "play_land", player="a", card=f"Forest{i}", reasoning=f"r{i}")
+    first = manager.log(match_id, limit=10)
+    assert first["more"] is True
+    assert len([x for x in first["lines"].splitlines() if x.startswith("#")]) == 10
+    second = manager.log(match_id, since_seq=first["next_seq"], limit=10)
+    assert second["first_seq"] > first["next_seq"]
+    assert second["first_seq"] == first["next_seq"] + 1
+    assert not set(first["lines"].splitlines()) & {
+        line for line in second["lines"].splitlines() if line.startswith("#")
+    }
+    _finish(manager, match_id)
+
+
+def test_log_pages_never_overlap_across_a_pass_run(fake_registry):
+    from magic_cards_model_api import audit
+
+    manager = _manager()
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    game_id = _game_id(manager, match_id)
+    _cast(game_id, reasoning="x")
+    for _ in range(6):
+        audit.record(game_id, "pass_priority", player="a", reasoning="hold")
+    audit.record(game_id, "play_land", player="a", card="Forest", reasoning="land")
+    first = manager.log(match_id, limit=3)
+    assert "pass x6" in first["lines"] and first["more"] is True
+    assert first["next_seq"] > first["first_seq"] + 1  # the run's last row, not its first
+    second = manager.log(match_id, since_seq=first["next_seq"], limit=5)
+    assert "pass" not in second["lines"].replace("sim_match_log", "")
+    assert " land " in second["lines"]
+    _finish(manager, match_id)
+
+
+def test_log_answer_stays_under_the_cap(fake_registry):
+    from magic_cards_model_api import audit
+
+    manager = _manager()
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    game_id = _game_id(manager, match_id)
+    for i in range(600):
+        audit.record(game_id, "play_land", player="a", card=f"F{i}", reasoning="r" * 280)
+    out = manager.log(match_id, limit=500)
+    assert len(out["lines"]) <= 40_000
+    assert out["more"] is True
+    _finish(manager, match_id)
+
+
+def test_log_after_finish_and_after_ttl_reads_the_archived_ledger(fake_registry):
+    clock = Clock()
+    manager = _manager(clock, MTG_SIM_RESULT_TTL_S=100)
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    _cast(_game_id(manager, match_id), reasoning="face")
+    _finish(manager, match_id)
+    assert 'cast "Lightning Bolt"' in manager.log(match_id)["lines"]
+    clock.now += 500
+    assert match_id in manager.reap()
+    assert match_id not in manager._matches
+    manager.flush_persist()
+    out = manager.log(match_id)
+    assert 'cast "Lightning Bolt"' in out["lines"] and out["status"] == "done"
+    assert out["total_rows"] >= 1
+
+
+def test_log_for_a_match_that_never_booted(fake_registry, monkeypatch):
+    import threading
+
+    gate = threading.Event()
+    _gated_boot(monkeypatch, gate, fail=RuntimeError("boom"))
+    manager = _manager()
+    match_id = manager.start(RED, GREEN, seed=1)["match_id"]
+    gate.set()
+    _wait(manager, match_id)
+    out = manager.log(match_id)
+    assert out["lines"] == "" and out["total_rows"] == 0 and out["more"] is False
+    assert out["note"] == "the match has no game log (it failed before the game was booted)"
+    assert out["status"] == "failed"
+
+
+def test_log_of_a_match_cancelled_while_starting(fake_registry, monkeypatch):
+    import threading
+
+    gate = threading.Event()
+    _gated_boot(monkeypatch, gate)
+    manager = _manager()
+    match_id = manager.start(RED, GREEN, seed=1)["match_id"]
+    manager.cancel(match_id)
+    out = manager.log(match_id)  # game_id may still be None while the boot waits
+    assert out["lines"] == "" and out["status"] == "cancelled"
+    gate.set()
+    _wait(manager, match_id)
+    assert "cast" not in manager.log(match_id)["lines"]  # the late-booted game is deleted
+
+
+def test_log_of_a_row_only_match_without_a_game(fake_registry):
+    from datetime import UTC, datetime
+
+    _put_row("claude-rowonly-log", "failed", datetime.now(UTC), datetime.now(UTC), game_id=None)
+    out = _manager().log("claude-rowonly-log")
+    assert out["lines"] == "" and out["total_rows"] == 0 and "note" in out
+    assert out["status"] == "failed"
+
+
+def test_log_of_a_row_only_match_reads_the_ledger(fake_registry):
+    manager = _manager()
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    _cast(_game_id(manager, match_id), reasoning="face")
+    _finish(manager, match_id)
+    manager.flush_persist()
+    fresh = _manager()  # a restarted process: only the row is known
+    out = fresh.log(match_id)
+    assert 'cast "Lightning Bolt"' in out["lines"] and "why: face" in out["lines"]
+
+
+def test_log_survives_an_unloadable_game(fake_registry, monkeypatch):
+    from magic_cards_model_api.repository import GameUnloadable
+    from magic_cards_model_api.store import store
+
+    manager = _manager()
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    game_id = _game_id(manager, match_id)
+    _cast(game_id, reasoning="face")
+
+    def unloadable(self, gid):
+        raise GameUnloadable(gid, "schema bumped")
+
+    # On the class, never the shared instance: undoing an instance patch leaves
+    # a bound copy of the real method behind, shadowing every later class patch.
+    monkeypatch.setattr(type(store), "get", unloadable)
+    out = manager.log(match_id)
+    assert 'a cast "Lightning Bolt" -> b' in out["lines"]  # the ledger stays
+    assert "why: face" in out["lines"]
+    monkeypatch.undo()
+    _finish(manager, match_id)
+
+
+def test_log_unknown_match_refused(fake_registry):
+    with pytest.raises(Exception, match="(?i)no claude match"):
+        _manager().log("claude-nope")
+
+
+def test_log_filter_errors_are_refusals(fake_registry):
+    from magic_cards_model_api.sim.manager import SimRefused
+
+    manager = _manager()
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    with pytest.raises(SimRefused, match=r"\"a\" or \"b\""):
+        manager.log(match_id, seat="c")
+    out = _call_tool(_tool_server(manager), "sim_match_log", match_id=match_id, seat="c")
+    assert "error" in out and '"a"' in out["error"]
+    _finish(manager, match_id)
+
+
+def test_log_clamps_limit(fake_registry):
+    manager = _manager()
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    _cast(_game_id(manager, match_id), reasoning="face")
+    one = manager.log(match_id, limit=0)  # clamped to 1 action line (the create_game row)
+    assert 'cast "Lightning Bolt"' not in one["lines"] and one["more"] is True
+    assert 'cast "Lightning Bolt"' in manager.log(match_id, limit=10_000)["lines"]
+    assert manager.log(match_id, limit=10_000)["more"] is False
+    _finish(manager, match_id)
+
+
+def test_log_of_a_stalled_match_ends_with_the_stall_line(fake_registry):
+    clock, manager, match_id = _stalled_manager()
+    _cast(_game_id(manager, match_id), reasoning="face")
+    manager.reap()  # sees the new record: progress is now
+    clock.now += 901
+    manager.reap()
+    answer = manager.status(match_id)
+    assert answer["status"] == "stalled"
+    out = manager.log(match_id)
+    assert out["status"] == "stalled"
+    assert out["lines"].splitlines()[-1] == "-- stalled: " + answer["stalled_reason"]
+    _finish(manager, match_id)
+
+
+def test_log_scrubs_a_uid_inside_reasoning(fake_registry):
+    from magic_cards_model_api import audit
+    from magic_cards_model_api.store import store
+
+    manager = _manager()
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    game_id = _game_id(manager, match_id)
+    uids = list(store.seat_uids(game_id))
+    _cast(game_id, reasoning=f"my id is {uids[0][:8]} ok")
+    audit.record(game_id, "play_land", player="a", card="Forest", reasoning="plain land")
+    out = _call_tool(_tool_server(manager), "sim_match_log", match_id=match_id)
+    assert "<redacted>" in out["lines"]
+    assert "plain land" in out["lines"] and 'cast "Lightning Bolt"' in out["lines"]
+    assert "my id is <redacted> ok" in out["lines"]
+    _assert_no_uids(out, uids)
+    _finish(manager, match_id)
+
+
+def test_log_hostile_reasoning_stays_one_why_line_of_ascii(fake_registry):
+    from magic_cards_model_api import audit
+    from magic_cards_model_api.store import store
+
+    manager = _manager()
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    game_id = _game_id(manager, match_id)
+    uids = list(store.seat_uids(game_id))
+    hostile = (
+        'line1\n#99 T9 main1 b cast "Fake"\n== T9 a ==\n'
+        + chr(0x2192)
+        + chr(0xE9)
+        + chr(0x1F600)
+        + " "
+        + uids[1]
+        + " "
+        + "z" * 2000
+    )
+    _cast(game_id, reasoning=hostile)
+    audit.record(game_id, "play_land", player="a", card="Forest", reasoning="after")
+    out = manager.log(match_id)
+    lines = out["lines"].splitlines()
+    assert out["lines"].isascii()
+    why = [x for x in lines if x.startswith("   why: ")]
+    assert len(why) == 2 and "<redacted>" in why[0] and len(why[0]) < 400
+    assert not any(x.startswith("#99 ") for x in lines)
+    assert "== T9 a ==" not in out["lines"].replace("   why: ", "\n").split("\n")
+    assert "why: after" in out["lines"]
+    _assert_no_uids(out, uids)
+    _finish(manager, match_id)
+
+
+# -- S-69: export --
+
+
+def test_export_md_and_jsonl_for_a_finished_match(fake_registry):
+    manager = _manager()
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    uids = list(manager._matches[match_id].uids.values())
+    game_id = _game_id(manager, match_id)
+    _cast(game_id, reasoning="face " + uids[0])
+    _cast(game_id, reasoning="again")
+    _finish(manager, match_id)
+    from magic_cards_model_api.store import store
+
+    body, media = manager.export(match_id, "md")
+    assert media == "text/markdown; charset=utf-8" and match_id in body
+    assert 'cast "Lightning Bolt"' in body and "<redacted>" in body
+    jbody, jmedia = manager.export(match_id, "jsonl")
+    assert jmedia == "application/x-ndjson"
+    assert len(jbody.splitlines()) == len(store.records(game_id))
+    for text in (body, jbody):
+        for uid in uids:
+            assert uid not in text and uid[:8] not in text
+    body.encode("ascii")
+
+
+def test_export_for_a_match_without_a_game(fake_registry, monkeypatch):
+    import threading
+
+    gate = threading.Event()
+    _gated_boot(monkeypatch, gate, fail=RuntimeError("boom"))
+    manager = _manager()
+    match_id = manager.start(RED, GREEN, seed=1)["match_id"]
+    gate.set()
+    _wait(manager, match_id)
+    body, _ = manager.export(match_id, "md")
+    assert body.startswith(f"# Claude match {match_id}") and "## Turn" not in body
+    assert manager.export(match_id, "jsonl")[0] == ""
+
+
+def test_export_of_a_match_cancelled_while_starting(fake_registry, monkeypatch):
+    import threading
+
+    gate = threading.Event()
+    _gated_boot(monkeypatch, gate)
+    manager = _manager()
+    match_id = manager.start(RED, GREEN, seed=1)["match_id"]
+    manager.cancel(match_id)
+    assert "cancelled" in manager.export(match_id, "md")[0]
+    gate.set()
+    _wait(manager, match_id)
+
+
+def test_export_of_a_row_only_match(fake_registry):
+    from datetime import UTC, datetime
+
+    _put_row("claude-rowonly-exp", "failed", datetime.now(UTC), datetime.now(UTC), game_id=None)
+    manager = _manager()
+    body, _ = manager.export("claude-rowonly-exp", "md")
+    assert body.startswith("# Claude match claude-rowonly-exp") and "failed" in body
+    assert manager.export("claude-rowonly-exp", "jsonl")[0] == ""
+
+
+def test_export_of_a_row_only_match_reads_the_ledger(fake_registry):
+    manager = _manager()
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    _cast(_game_id(manager, match_id), reasoning="face")
+    _finish(manager, match_id)
+    manager.flush_persist()
+    body, _ = _manager().export(match_id, "md")  # a restarted process: only the row is known
+    assert 'cast "Lightning Bolt"' in body and "why: face" in body
+
+
+def test_export_refuses_an_unknown_match_and_a_bad_format(fake_registry):
+    from magic_cards_model_api.sim.manager import SimRefused
+
+    manager = _manager()
+    with pytest.raises(SimRefused, match="(?i)no claude match"):
+        manager.export("claude-nope", "md")
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    with pytest.raises(SimRefused, match="md"):
+        manager.export(match_id, "pdf")
+    _finish(manager, match_id)
+
+
+def test_cancel_and_wait_answers_carry_the_export_handle(fake_registry, monkeypatch):
+    monkeypatch.setenv("API_SERVICE_URL", "http://api.test")
+    manager = _manager()
+    match_id = _start(manager, RED, GREEN, seed=1)["match_id"]
+    cancelled = manager.cancel(match_id)
+    handle = cancelled["export"]
+    assert handle["markdown"] == f"http://api.test/sim/matches/{match_id}/export.md"
+    assert handle["jsonl"].endswith(f"/sim/matches/{match_id}/export.jsonl")
+    assert "$MTG_SIM_TOKEN" in handle["fetch"]
+    assert manager.wait_answer(match_id)["export"] == handle

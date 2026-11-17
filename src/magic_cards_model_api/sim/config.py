@@ -45,6 +45,8 @@ DEFAULT_CLAUDE_MODELS = (
     "claude-sonnet-5",
     "claude-haiku-4-5",
 )
+#: Claude Code drops a streamable HTTP call that sends nothing for 5 minutes.
+WAIT_IDLE_WINDOW_S = 300
 
 
 @dataclass(frozen=True)
@@ -60,16 +62,32 @@ class SimLimits:
     worker_max_rss_mb: int
     max_claude_matches: int
     claude_deadline_s: float
+    claude_stall_s: float
+    claude_stall_abort_s: float
     result_ttl_s: float
     baseline_enabled: bool
     claude_model: str
     claude_effort: str
     claude_models: tuple[str, ...]
     max_snapshots: int
+    log_retention_s: float
+    wait_heartbeat_s: float
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> SimLimits:
         env = os.environ if env is None else env
+        stall_s = _number(env, "MTG_SIM_CLAUDE_STALL_S", 900, float)
+        stall_abort_s = _number(env, "MTG_SIM_CLAUDE_STALL_ABORT_S", 1800, float)
+        if stall_abort_s <= stall_s:
+            raise ValueError(
+                "MTG_SIM_CLAUDE_STALL_ABORT_S must be greater than MTG_SIM_CLAUDE_STALL_S"
+            )
+        heartbeat_s = _number(env, "MTG_SIM_WAIT_HEARTBEAT_S", 60, float)
+        if not 0 < heartbeat_s < WAIT_IDLE_WINDOW_S:
+            raise ValueError(
+                "MTG_SIM_WAIT_HEARTBEAT_S must be above 0 and below 300 s: a wait that sends"
+                " nothing for the 5-minute client idle window is dropped"
+            )
         return cls(
             token=env.get("MTG_SIM_TOKEN") or None,
             max_sandboxes=_number(env, "MTG_SIM_MAX_SANDBOXES", 1, int),
@@ -82,10 +100,14 @@ class SimLimits:
             worker_max_rss_mb=_number(env, "MTG_SIM_WORKER_MAX_RSS_MB", 1024, int),
             max_claude_matches=_number(env, "MTG_SIM_MAX_CLAUDE_MATCHES", 1, int),
             claude_deadline_s=_number(env, "MTG_SIM_CLAUDE_DEADLINE_S", 14400, float),
+            claude_stall_s=stall_s,
+            claude_stall_abort_s=stall_abort_s,
             result_ttl_s=_number(env, "MTG_SIM_RESULT_TTL_S", 86400, float),
             baseline_enabled=_flag(env, "MTG_SIM_BASELINE_ENABLED"),
             claude_model=_text(env, "MTG_SIM_CLAUDE_MODEL", DEFAULT_CLAUDE_MODEL),
             claude_effort=_text(env, "MTG_SIM_CLAUDE_EFFORT", DEFAULT_CLAUDE_EFFORT),
             claude_models=_names(env, "MTG_SIM_CLAUDE_MODELS", DEFAULT_CLAUDE_MODELS),
             max_snapshots=_number(env, "MTG_SIM_MAX_SNAPSHOTS", 16, int),
+            log_retention_s=_number(env, "MTG_SIM_LOG_RETENTION_S", 2592000, float),
+            wait_heartbeat_s=float(heartbeat_s),
         )

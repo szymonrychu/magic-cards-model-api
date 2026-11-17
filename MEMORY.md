@@ -3594,3 +3594,81 @@ Retroactive audit (2026-09-26) of every change to pre-existing test content in a
   out magic-cards-model main unpinned, and `scripts/next_version.py` prints nothing while HEAD
   carries a tag (v0.11.0), so this release-note commit is what makes main untagged and cuts
   v0.11.2 with rebuilt images.
+- 2026-11-16 - mcp 2.1.1 stateless streamable HTTP streams `notifications/progress` on the
+  tools/call SSE response. `json_response=False` is now passed explicitly in `SimMount.lifespan` so
+  a default change cannot silently turn the wait tool's heartbeats off. Proven by
+  `test_progress_notifications_stream_over_the_sim_mount`; Step 2 outcome: the test already PASSED
+  before the explicit flag (2.1.1 defaults to SSE), so the flag is a pin, not a fix.
+- 2026-11-16 - `sim/gamelog.py` (compact-v1 projection, pure): the ledger records blocks as action
+  `declare_blockers` with detail key `blocks` (app.py `action_declare_blockers`), so both `block`
+  and `declare_blockers` print the verb `block`. `LogLine.end_seq` is the last seq a collapsed
+  pass run covers, so a pager resumes at `end_seq or seq` with no overlap. `head_tail` caps the
+  kept head at three quarters of the budget so the newest lines always fit. Shared ledger
+  fixtures live in `tests/sim_claude_kit.py` (test modules cannot import each other's helpers).
+- 2026-11-16 - `sim_claude_matches` (revision `9b3e5d7a1c24`, head after `e7c4a913f256`) holds the
+  persisted Claude-seat match header: 13 columns, no seat uid column, `game_id` stored but never
+  answered. One writer (ClaudeMatchManager, Task 5); repository methods `put/get/list/
+  fail_live/delete_before` on both repositories, rows are plain dicts with aware datetimes.
+  `fail_live_sim_claude_matches` is one status-guarded UPDATE ... RETURNING. The postgres params
+  of `tests/test_sim_match_rows.py` and `test_head_creates_sim_claude_matches` only run under
+  `mise run test:pg` (no Docker in the agent pod).
+- 2026-11-16 - Every terminal transition of a Claude-seat match goes through
+  `ClaudeMatchManager._finish` (status-guarded claim under `match.lock`, `ended` event,
+  `mtg_sim_claude_matches_total{status}`, one cleanup outside the lock), so a cancel racing the
+  reaper stops each seat once. `_result_of` reads the game before the claim (no I/O under the lock);
+  a losing caller pays one wasted read. A start that the start thread loses (cancelled or start
+  deadline) still runs `_cleanup` from the thread, because the thread may have created more after
+  the winner's cleanup. `_log_lines_for(since_seq=N)` reads `records_since(N-1)` and uses row N only
+  as the delta baseline: it answers the rows after N.
+- 2026-11-16 - Claude match headers persist in `sim_claude_matches` (one writer, no seat uids; a
+  restart marks live rows failed with `RESTART_ERROR` because the sweep stops their seats; 30-day
+  retention `MTG_SIM_LOG_RETENTION_S`, pruned by `reap` at most hourly; the records follow the
+  game soft-delete retention unchanged). Write-through `_persist` takes its snapshot inside a
+  manager lock so the newest state is the last write, and swallows store errors (type name logged):
+  the match runs from memory when Postgres is down. `status` and `cancel` fall back to the row
+  for a match no longer held in memory (cancel of a terminal or row-only match is a no-op that
+  answers the final status). `test_finished_result_dropped_after_ttl` changed: after the TTL the
+  status now answers from the row, so the refusal moved behind deleting the row.
+- 2026-11-16 (S-69, T-551): no-progress watchdog. The progress signal is `max(records.seq)`,
+  read on the 30 s reaper pass (no new store hook). 900 s stall and 1800 s abort chosen to exceed
+  a slow high-effort decision (Q4 B). `stalled` stays non-terminal: it holds the slot, goes back
+  to `running` on a new record, and `_finish` claims `failed` from it like from `running`. The
+  first seq read only sets the baseline (`last_seq`); `last_progress` starts when the match
+  becomes `running`. Terminal checks (game gone, over, deadline, dead seats) run before the
+  stall checks. The stall gauge is set on every `reap` from the stalled matches.
+- 2026-11-16 (S-69, T-551): Claude-match row writes go through one background writer thread
+  (review I1/I2, controller ruling). `_persist` only snapshots under the match lock and enqueues
+  (newest snapshot per match_id wins); the writer writes outside every lock, logs failures by
+  exception type, keeps a failed snapshot and retries it on its next pass (5 s), and exits when
+  nothing is pending (restarted by the next enqueue). Why: a hung Postgres must not delay a tool
+  answer, the seat stop/game delete or the reaper. `_finish` now cleans up before enqueueing the
+  terminal row. `flush_persist(timeout)` is the deterministic test hook; `shutdown()` flushes
+  (bounded) and stops it, called from the app lifespan. Reads (list, status/cancel of an unheld
+  id) stay direct: the records ledger shares the DB, so a hung DB already stops the game.
+- 2026-11-17 (S-69, T-553): Claude-match delivery is one blocking `sim_match_claude_wait` (Q1 A)
+  because MCP delivers a tool result only as the tools/call response (no tasks extension, no
+  push). Heartbeats every `MTG_SIM_WAIT_HEARTBEAT_S` (60 s, must stay below 300) keep Claude
+  Code's 5-minute HTTP idle window open, and the first notification is sent at once to meet its
+  60 s first-byte timer. The progress value is a notification counter, not the last seq: MCP
+  progress must increase and a heartbeat carries no new seq; the message carries the content
+  (the newest compact line, read at most every 5 s). The wait returns on `stalled` too (Q6 A)
+  with the reason and a note, so a hung match never pins the caller. `wait_tick(read_log=False)`
+  is pure memory and runs on the event loop; every store read goes through `asyncio.to_thread`,
+  and `CancelledError` is never caught, so a dropped client ends the coroutine without touching
+  the match. The newest line is read with `_log_lines_for(since_seq=max_seq - 1)` because
+  since_seq=N answers the rows after N. The tool passes `tick_s=min(1, heartbeat)`.
+- 2026-11-17 (S-69, T-554): export is HTTP only (Q5 B). The two routes are added to the Starlette
+  app returned by `streamable_http_app` in `SimMount.lifespan`, so `SimAuth` guards them exactly
+  like `/sim/mcp`; the tool answers the URL, never the text. `render_jsonl(rows, scrub)` has no
+  `names` parameter (no consumer). Markdown reuses `project(reason_max=None)` and drops its
+  per-turn header lines (the `## Turn n (active p)` heading replaces them; the active player
+  comes from the rows). Secrets are removed per substring (`_scrubber`), never by replacing the
+  document. A match with no ledger exports its header plus a note, never a 500; only an unknown
+  id is a 404. `_read_ledger` is the one ledger read shared by the log projection and export.
+- 2026-11-16 (sim game log, S-69): the match export is HTTP-only under `/sim` with the shared bearer (Q5 B): no paged tool text, in-cluster only; `sim_match_claude_export` answers the URL.
+- 2026-11-16 (sim game log): reasoning is the seat's stated `reasoning` only (Q2 A); no transcript capture, so no seat image change.
+- 2026-11-16 (sim game log): the compact-v1 limits (300-char why, 40,000-char log answer, 45,000-char wait head/tail) are constants in `sim/gamelog.py`; re-measure them on the first real match.
+- 2026-11-16 (sim game log): the Claude tool texts no longer ask for polling: start answers `next` (call `sim_match_claude_wait` once) and `poll_every_s` is gone from every answer; status says "check at once (no waiting)". Why: one blocking wait call replaces a 300 s poll loop for the calling agent.
+- 2026-11-17 (S-69 final fix wave): a `sim_match_claude_wait` issued on an already-stalled match blocks until the match leaves stalled (then it is an ordinary wait: returns on terminal or on a new stall) or `max_wait_s`; a wait that saw the match running still returns on the stall (Q6 A). Why: "wait again" must really wait instead of spinning turns. Every wait tick now runs through `asyncio.to_thread`, because a match the process no longer holds is answered from its row (DB I/O).
+- 2026-11-17 (S-69 final fix wave): `_row` treats a live row this process does not hold as an orphan of a missed restart sweep: it answers and queues the row as `failed` with RESTART_ERROR (a snapshot still queued for the writer wins). Why: such a row never ends a wait and is never pruned by retention; its seats are gone with the old process.
+- 2026-11-17 (S-69 final fix wave): `_persist` stores `result` scrubbed per substring with the match secrets (`gamelog.scrub_values`), and `_why` scrubs before the 300-char trim. Why: `last_log` carries seat reasoning, the row outlives the in-memory redaction, and a trim must never leave a uid prefix.

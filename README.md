@@ -677,7 +677,9 @@ environment, no database and a memory cap.
   missing one 401. The token comes from the `mtg-sim` Secret; it is not `OPS_TOKEN`.
 - Reach: in-cluster only. `/sim` is denied at the public ingresses like `/metrics`.
 - Tools: `sim_card_lookup`, `sim_new`, `sim_state`, `sim_legal_actions`, `sim_act`, `sim_snapshot`, `sim_restore`,
-  `sim_run_script`, `sim_import_mtgo_log`, `sim_review_mtgo_log`, `sim_end`, `sim_match_claude_start`, `sim_match_claude_status`; and,
+  `sim_run_script`, `sim_import_mtgo_log`, `sim_review_mtgo_log`, `sim_end`, `sim_match_claude_start`, `sim_match_claude_status`,
+  `sim_match_claude_wait`, `sim_match_claude_cancel`, `sim_match_log`, `sim_match_claude_export`,
+  `sim_match_claude_list`; and,
   only when `MTG_SIM_BASELINE_ENABLED` is set, `sim_play_new`, `sim_match`, `sim_match_status`.
   The engine baseline AI is off as an opponent by default: with the flag unset those three tools
   are not registered and `BatchManager.start` / `SandboxManager.new(mode="play")` refuse with a
@@ -777,10 +779,47 @@ environment, no database and a memory cap.
   `effort` apply to both seats (defaults `claude-opus-5-5` at `low`); `seat_a` / `seat_b`
   (`{"model": ..., "effort": ...}`) override one seat. A model outside `MTG_SIM_CLAUDE_MODELS` or an
   effort outside the five levels is refused, and the start and status answers echo each seat's
-  model and effort;
-  `sim_match_claude_status(match_id)` answers from the last background check (every 30 s). One
+  model and effort. The flow is start, then `sim_match_claude_wait` once, with `sim_match_log`,
+  `sim_match_claude_cancel`, `sim_match_claude_list`, `sim_match_claude_export` and
+  `sim_match_claude_status` as the side tools (none of them needs polling);
+  `sim_match_claude_status(match_id)` answers at once from the last background check (every 30 s). One
   match at a time. A game takes about 33-55 min, and the match is bounded by the seat deadline
   (`MTG_SIM_CLAUDE_DEADLINE_S`), not by the engine-only batch cap.
+  `sim_match_claude_wait(match_id, max_wait_s=None)` is the one call to make after the start: it
+  blocks until the match ends, is `stalled` (answered with `stalled_reason` and a note: cancel it
+  or wait again) or `max_wait_s` passes (answered `running` with `waited_s` and a note), and
+  returns the result (`winner`, `drawn`, `turns`, `error`, `duration_s`, `seats`) plus the
+  `compact-v1` log (head and tail within 45000 characters; `truncated` and `next_seq` page the cut
+  middle with `sim_match_log`). While it waits it sends MCP progress: one notification at once,
+  the newest action line at most every 5 s when there are new records, and a heartbeat every
+  `MTG_SIM_WAIT_HEARTBEAT_S` otherwise, so the client's 5-minute idle window never closes. It is
+  the only call allowed past the call timeout; it declares `anthropic/maxResultSizeChars` 60000.
+  A terminal match answers at once, and re-issuing it after a broken stream answers the same.
+  `sim_match_claude_cancel(match_id, reason=None)` stops a starting, running or stalled match
+  (seats stopped, game deleted, slot freed, status `cancelled`) and answers the last 20 log lines
+  as `log_tail`; a finished match answers its final status unchanged.
+  `sim_match_log(match_id, since_seq=0, limit=200, turn=None, seat=None, kinds="plays",
+  reasoning=True, board="changes")` answers a page (`compact-v1` text in `lines`, under 40000
+  characters) of every action with the seat's stated reasoning, live or finished; page with
+  `since_seq=next_seq` while `more`. A match that failed before the game booted answers an empty
+  log and a `note`.
+  `sim_match_claude_export(match_id, format="markdown")` answers where to download the whole
+  log, never the text: `{match_id, format, url, media_type, fetch}`. Two plain HTTP routes serve
+  it behind the same bearer as `/sim/mcp` (401 wrong or missing, 503 without `MTG_SIM_TOKEN`; an
+  unknown match is 404): `GET /sim/matches/{match_id}/export.md` (`text/markdown`: header table,
+  one `## Turn n` section per turn with the untrimmed reasoning, final board) and
+  `GET /sim/matches/{match_id}/export.jsonl` (`application/x-ndjson`: one object per ledger
+  record with `seq, ts, turn, step, phase, actor, action, detail, life, reasoning`). The
+  `fetch` field is `curl -fsS -H "Authorization: Bearer $MTG_SIM_TOKEN" -o <file> <url>`;
+  in-cluster only (`/sim` is denied at the public ingress). A match with no game log exports its
+  header and an empty log. The cancel and wait answers carry the same links as `export`.
+  `sim_match_claude_list(limit=10)` lists recent matches (1-50, newest first) from the persisted
+  table: `match_id`, `status`, `decks`, `seats`, `started_at`, `finished_at`, `turns`, `winner`,
+  `error`; use it to find a `match_id` after a restart or a lost context. Match headers are
+  written to Postgres by a background writer (eventually, a failed write is retried) and kept `MTG_SIM_LOG_RETENTION_S`, so `sim_match_claude_status`
+  and `sim_match_claude_cancel` still answer after the in-memory result is gone; a restart marks
+  every match that was still live as `failed` ("the server restarted during the match; the log
+  so far is kept").
 - Caps, all read by `sim/config.py` (`SimLimits.from_env`) from the environment of the
   `mtg-stack` pod:
 
@@ -798,11 +837,15 @@ environment, no database and a memory cap.
   | `MTG_SIM_WORKER_MAX_RSS_MB` | 1024 | resident memory cap of a sim worker process |
   | `MTG_SIM_MAX_CLAUDE_MATCHES` | 1 | Claude matches at once |
   | `MTG_SIM_CLAUDE_DEADLINE_S` | 14400 | seat deadline of a Claude match (not the batch cap) |
+  | `MTG_SIM_CLAUDE_STALL_S` | 900 | seconds without a new action before a Claude match is `stalled` (non-terminal, holds the slot) |
+  | `MTG_SIM_CLAUDE_STALL_ABORT_S` | 1800 | seconds without a new action before a stalled match is failed and cleaned up (must exceed the stall window) |
   | `MTG_SIM_CLAUDE_MODEL` | claude-opus-5-5 | default model of a Claude match seat |
   | `MTG_SIM_CLAUDE_EFFORT` | low | default effort of a Claude match seat |
   | `MTG_SIM_CLAUDE_MODELS` | claude-opus-5-5, claude-opus-5, claude-sonnet-5-5, claude-sonnet-5, claude-haiku-4-5 | allowed models (comma list) |
   | `MTG_SIM_RESULT_TTL_S` | 86400 | how long finished batch and match results are kept |
+  | `MTG_SIM_LOG_RETENTION_S` | 2592000 (30 days) | how long a finished match's status, log and export stay readable |
   | `MTG_SIM_MAX_SNAPSHOTS` | 16 | snapshots per sandbox (`sim_snapshot`) |
+  | `MTG_SIM_WAIT_HEARTBEAT_S` | 60 | heartbeat interval of `sim_match_claude_wait` (above 0, below the 300 s client idle window) |
 
 ### Preset entry (operator)
 
@@ -873,8 +916,8 @@ is the same file; the value goes to the preset env) is in `deploy/k8s/README.md`
 - "Let me play it" (only when the baseline is enabled): `sim_play_new`, keep with `mulligan` `{"take": false}`, play with `sim_act`
   as `you`, finish with `sim_end`.
 - A Claude-vs-Claude match only when the user accepts 33-55 min per game:
-  `sim_match_claude_start`, then poll `sim_match_claude_status` every few minutes (about 300 s),
-  never in a tight loop.
+  `sim_match_claude_start`, then call `sim_match_claude_wait` once; it returns when the match ends
+  with the result and the log (`sim_match_log` reads it live, `sim_match_claude_cancel` stops it).
 - Always relay `support_warnings` (and `support_note`) to the user. Never claim a result for a
   card the engine runs as silent; say the result is unreliable.
 - When a tool refuses with "slot in use" (or a batch or match is already running), tell the
